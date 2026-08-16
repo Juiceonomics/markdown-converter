@@ -287,6 +287,8 @@
   .zip-item .size { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
   .zip-item button { font-size: 12px; padding: 4px 10px; }
   .zip-card > button { margin-top: auto; }
+  .zip-grid.single { grid-template-columns: 1fr; max-width: 720px; }
+  .zip-item .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; flex: 0 0 auto; border: 1px solid var(--hairline); }
 
   @media (max-width: 760px) {
     .editor { padding: 32px 24px; }
@@ -324,6 +326,7 @@
   <nav class="view-switch" role="tablist" aria-label="功能切换">
     <button class="view-tab active" id="tab-editor" role="tab" aria-selected="true" data-view="editor">编辑器</button>
     <button class="view-tab" id="tab-zip" role="tab" aria-selected="false" data-view="zip">压缩工具</button>
+    <button class="view-tab" id="tab-imgpdf" role="tab" aria-selected="false" data-view="imgpdf">图片转 PDF</button>
   </nav>
   <div class="spacer"></div>
   <div class="actions" id="editor-actions">
@@ -428,6 +431,18 @@
   <input type="file" id="unzip-file-input" accept=".zip" hidden>
 </section>
 
+<section class="zip-tool" id="imgpdf-tool" hidden>
+  <div class="zip-grid single">
+    <div class="zip-card">
+      <h2>图片转 PDF</h2>
+      <div class="zip-drop" id="imgpdf-drop" role="button" tabindex="0" aria-label="选择要转 PDF 的图片">拖入图片到这里，或点击选择（可多选）</div>
+      <ul class="zip-list" id="imgpdf-list"></ul>
+      <button id="imgpdf-download" class="primary" disabled>下载 PDF</button>
+    </div>
+  </div>
+  <input type="file" id="imgpdf-file-input" accept="image/*" multiple hidden>
+</section>
+
 <footer class="statusbar">
   <span id="status">0 字符 · 0 词 · 富文本</span>
   <span class="hint">字号 / 颜色 / 高亮会保留在导出文件中；切换「Markdown 源码」时以内联 HTML 保留</span>
@@ -464,6 +479,7 @@
 <script src="turndown-plugin-gfm.js"></script>
 <script src="highlight.min.js"></script>
 <script src="fflate.min.js"></script>
+<script src="jspdf.umd.min.js"></script>
 <script defer src="katex/katex.min.js"></script>
 <script>
   const editor = document.getElementById('editor');
@@ -959,10 +975,11 @@
     toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
   }
 
-  // ===== 视图切换（编辑器 / 压缩工具）=====
+  // ===== 视图切换（编辑器 / 压缩工具 / 图片转 PDF）=====
   const editorActions = document.getElementById('editor-actions');
   const stageEl = document.querySelector('.stage');
   const zipTool = document.getElementById('zip-tool');
+  const imgpdfTool = document.getElementById('imgpdf-tool');
 
   function setView(v) {
     view = v;
@@ -974,8 +991,11 @@
     editorActions.style.display = isEditor ? '' : 'none';
     stageEl.style.display = isEditor ? '' : 'none';
     toolbar.style.display = isEditor ? (mode === 'source' ? 'none' : 'flex') : 'none';
-    zipTool.hidden = isEditor;
-    if (isEditor) updateStatus(); else status.textContent = '压缩工具 · 打包 / 解压';
+    zipTool.hidden = (v !== 'zip');
+    imgpdfTool.hidden = (v !== 'imgpdf');
+    if (isEditor) updateStatus();
+    else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
+    else status.textContent = '图片转 PDF';
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
@@ -1089,6 +1109,90 @@
       setTimeout(() => downloadBytes(unzippedFiles[name], name.split('/').pop(), 'application/octet-stream'), i * 300);
     });
     showToast('开始下载 ' + names.length + ' 个文件');
+  });
+
+  // ===== 图片转 PDF（jsPDF）=====
+  const imgpdfDrop = document.getElementById('imgpdf-drop');
+  const imgpdfList = document.getElementById('imgpdf-list');
+  const imgpdfFileInput = document.getElementById('imgpdf-file-input');
+  const imgpdfDownloadBtn = document.getElementById('imgpdf-download');
+
+  let imgpdfItems = [];
+  let imgpdfSeq = 0;
+
+  function readFileAsDataURL(file) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+  }
+  function loadImage(src) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = src;
+    });
+  }
+
+  async function addImgpdfFiles(fileList) {
+    for (const f of fileList) {
+      if (!f.type || !f.type.startsWith('image/')) continue;
+      const dataUrl = await readFileAsDataURL(f);
+      let img;
+      try { img = await loadImage(dataUrl); } catch (e) { continue; }
+      let format = null;
+      if (f.type === 'image/jpeg') format = 'JPEG';
+      else if (f.type === 'image/png') format = 'PNG';
+      else if (f.type === 'image/webp') format = 'WEBP';
+      let finalUrl = dataUrl;
+      if (!format) {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        finalUrl = c.toDataURL('image/png');
+        format = 'PNG';
+      }
+      imgpdfItems.push({ id: 'i' + (++imgpdfSeq), file: f, dataUrl: finalUrl, format: format, width: img.naturalWidth, height: img.naturalHeight });
+    }
+    renderImgpdfList();
+  }
+  function renderImgpdfList() {
+    imgpdfList.innerHTML = imgpdfItems.map(it =>
+      '<li class="zip-item"><img class="thumb" src="' + it.dataUrl + '" alt="">' +
+      '<span class="name">' + escapeHtml(it.file.name) + '</span>' +
+      '<span class="size">' + it.width + '×' + it.height + '</span>' +
+      '<button data-rm="' + it.id + '">移除</button></li>'
+    ).join('');
+    imgpdfDownloadBtn.disabled = imgpdfItems.length === 0;
+  }
+
+  imgpdfDrop.addEventListener('click', () => imgpdfFileInput.click());
+  imgpdfDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); imgpdfFileInput.click(); } });
+  imgpdfFileInput.addEventListener('change', (e) => { addImgpdfFiles(e.target.files); imgpdfFileInput.value = ''; });
+  bindZipDrop(imgpdfDrop, addImgpdfFiles);
+
+  imgpdfList.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { imgpdfItems = imgpdfItems.filter(x => x.id !== rm.dataset.rm); renderImgpdfList(); }
+  });
+
+  imgpdfDownloadBtn.addEventListener('click', () => {
+    if (!imgpdfItems.length) return;
+    const doc = new jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+    const pageW = 210, pageH = 297, margin = 12;
+    const maxW = pageW - margin * 2, maxH = pageH - margin * 2;
+    imgpdfItems.forEach((it, i) => {
+      if (i > 0) doc.addPage();
+      const ratio = it.width / it.height;
+      let w = maxW, h = maxW / ratio;
+      if (h > maxH) { h = maxH; w = maxH * ratio; }
+      doc.addImage(it.dataUrl, it.format, (pageW - w) / 2, (pageH - h) / 2, w, h);
+    });
+    doc.save('图片.pdf');
+    showToast('已生成 PDF（' + imgpdfItems.length + ' 张图片）');
   });
 
   // ===== 导出 =====
