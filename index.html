@@ -289,6 +289,12 @@
   .zip-card > button { margin-top: auto; }
   .zip-grid.single { grid-template-columns: 1fr; max-width: 720px; }
   .zip-item .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; flex: 0 0 auto; border: 1px solid var(--hairline); }
+  .imgc-controls { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 14px; font-size: 13px; color: var(--ink-2); }
+  .imgc-label { display: flex; align-items: center; gap: 6px; }
+  .imgc-label input[type="range"] { width: 120px; accent-color: var(--accent); }
+  .imgc-label select { font-family: var(--font-ui); font-size: 13px; padding: 4px 6px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: #fff; color: var(--ink); }
+  .pdf-split-info { font-size: 13px; color: var(--ink-2); margin: 12px 0; }
+  .pdf-split-info input[type="text"] { font-family: var(--font-ui); font-size: 13px; padding: 5px 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; width: 150px; margin: 0 4px; }
 
   @media (max-width: 760px) {
     .editor { padding: 32px 24px; }
@@ -326,7 +332,8 @@
   <nav class="view-switch" role="tablist" aria-label="功能切换">
     <button class="view-tab active" id="tab-editor" role="tab" aria-selected="true" data-view="editor">编辑器</button>
     <button class="view-tab" id="tab-zip" role="tab" aria-selected="false" data-view="zip">压缩工具</button>
-    <button class="view-tab" id="tab-imgpdf" role="tab" aria-selected="false" data-view="imgpdf">图片转 PDF</button>
+    <button class="view-tab" id="tab-imgpdf" role="tab" aria-selected="false" data-view="imgpdf">图片工具</button>
+    <button class="view-tab" id="tab-pdf" role="tab" aria-selected="false" data-view="pdf">PDF 工具</button>
   </nav>
   <div class="spacer"></div>
   <div class="actions" id="editor-actions">
@@ -335,6 +342,8 @@
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
     <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
+    <button id="btn-md" data-tip="导出 Markdown" data-tip-desc="导出为 .md 文件">导出 Markdown</button>
+    <button id="btn-html" data-tip="导出 HTML" data-tip-desc="导出为 .html 网页文件">导出 HTML</button>
     <button id="btn-pdf" class="outline" data-tip="导出 PDF" data-tip-desc="通过浏览器打印对话框，选择「另存为 PDF」">导出 PDF</button>
     <button id="btn-word" class="primary" data-tip="导出 Word" data-tip-desc="导出为 .doc 文件，Word 可直接打开并保留样式">导出 Word</button>
   </div>
@@ -432,15 +441,50 @@
 </section>
 
 <section class="zip-tool" id="imgpdf-tool" hidden>
-  <div class="zip-grid single">
+  <div class="zip-grid">
     <div class="zip-card">
       <h2>图片转 PDF</h2>
       <div class="zip-drop" id="imgpdf-drop" role="button" tabindex="0" aria-label="选择要转 PDF 的图片">拖入图片到这里，或点击选择（可多选）</div>
       <ul class="zip-list" id="imgpdf-list"></ul>
       <button id="imgpdf-download" class="primary" disabled>下载 PDF</button>
     </div>
+    <div class="zip-card">
+      <h2>图片压缩</h2>
+      <div class="imgc-controls">
+        <label class="imgc-label">质量 <input type="range" id="imgc-quality" min="30" max="95" value="70"> <span id="imgc-quality-val">70%</span></label>
+        <label class="imgc-label">格式
+          <select id="imgc-format">
+            <option value="image/webp">WebP（最小）</option>
+            <option value="image/jpeg">JPEG</option>
+          </select>
+        </label>
+      </div>
+      <div class="zip-drop" id="imgc-drop" role="button" tabindex="0" aria-label="选择要压缩的图片">拖入图片到这里，或点击选择（可多选）</div>
+      <ul class="zip-list" id="imgc-list"></ul>
+      <button id="imgc-download" class="primary" disabled>压缩并下载</button>
+    </div>
   </div>
   <input type="file" id="imgpdf-file-input" accept="image/*" multiple hidden>
+  <input type="file" id="imgc-file-input" accept="image/*" multiple hidden>
+</section>
+
+<section class="zip-tool" id="pdf-tool" hidden>
+  <div class="zip-grid">
+    <div class="zip-card">
+      <h2>合并 PDF</h2>
+      <div class="zip-drop" id="pdf-merge-drop" role="button" tabindex="0" aria-label="选择要合并的 PDF">拖入多个 PDF 到这里，或点击选择</div>
+      <ul class="zip-list" id="pdf-merge-list"></ul>
+      <button id="pdf-merge-download" class="primary" disabled>合并下载</button>
+    </div>
+    <div class="zip-card">
+      <h2>拆分 PDF</h2>
+      <div class="zip-drop" id="pdf-split-drop" role="button" tabindex="0" aria-label="选择要拆分的 PDF">拖入一个 PDF 到这里，或点击选择</div>
+      <div class="pdf-split-info" id="pdf-split-info" hidden></div>
+      <button id="pdf-split-download" class="primary" disabled>提取选中页</button>
+    </div>
+  </div>
+  <input type="file" id="pdf-merge-input" accept=".pdf" multiple hidden>
+  <input type="file" id="pdf-split-input" accept=".pdf" hidden>
 </section>
 
 <footer class="statusbar">
@@ -480,6 +524,7 @@
 <script src="highlight.min.js"></script>
 <script src="fflate.min.js"></script>
 <script src="jspdf.umd.min.js"></script>
+<script src="pdf-lib.min.js"></script>
 <script defer src="katex/katex.min.js"></script>
 <script>
   const editor = document.getElementById('editor');
@@ -975,11 +1020,12 @@
     toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
   }
 
-  // ===== 视图切换（编辑器 / 压缩工具 / 图片转 PDF）=====
+  // ===== 视图切换（编辑器 / 压缩工具 / 图片工具 / PDF 工具）=====
   const editorActions = document.getElementById('editor-actions');
   const stageEl = document.querySelector('.stage');
   const zipTool = document.getElementById('zip-tool');
   const imgpdfTool = document.getElementById('imgpdf-tool');
+  const pdfTool = document.getElementById('pdf-tool');
 
   function setView(v) {
     view = v;
@@ -993,9 +1039,11 @@
     toolbar.style.display = isEditor ? (mode === 'source' ? 'none' : 'flex') : 'none';
     zipTool.hidden = (v !== 'zip');
     imgpdfTool.hidden = (v !== 'imgpdf');
+    pdfTool.hidden = (v !== 'pdf');
     if (isEditor) updateStatus();
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
-    else status.textContent = '图片转 PDF';
+    else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
+    else status.textContent = 'PDF 工具 · 合并 / 拆分';
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
@@ -1195,6 +1243,183 @@
     showToast('已生成 PDF（' + imgpdfItems.length + ' 张图片）');
   });
 
+  // ===== 图片压缩 =====
+  const imgcDrop = document.getElementById('imgc-drop');
+  const imgcList = document.getElementById('imgc-list');
+  const imgcFileInput = document.getElementById('imgc-file-input');
+  const imgcDownloadBtn = document.getElementById('imgc-download');
+  const imgcQuality = document.getElementById('imgc-quality');
+  const imgcQualityVal = document.getElementById('imgc-quality-val');
+  const imgcFormat = document.getElementById('imgc-format');
+
+  let imgcItems = [];
+  let imgcSeq = 0;
+
+  imgcQuality.addEventListener('input', () => { imgcQualityVal.textContent = imgcQuality.value + '%'; });
+
+  async function addImgcFiles(fileList) {
+    for (const f of fileList) {
+      if (!f.type || !f.type.startsWith('image/')) continue;
+      const dataUrl = await readFileAsDataURL(f);
+      imgcItems.push({ id: 'c' + (++imgcSeq), file: f, dataUrl });
+    }
+    renderImgcList();
+  }
+  function renderImgcList() {
+    imgcList.innerHTML = imgcItems.map(it =>
+      '<li class="zip-item"><img class="thumb" src="' + it.dataUrl + '" alt="">' +
+      '<span class="name">' + escapeHtml(it.file.name) + '</span>' +
+      '<span class="size">' + formatSize(it.file.size) + '</span>' +
+      '<button data-rm="' + it.id + '">移除</button></li>'
+    ).join('');
+    imgcDownloadBtn.disabled = imgcItems.length === 0;
+  }
+
+  function compressImageToBlob(dataUrl, quality, mime) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        c.toBlob(res, mime, quality);
+      };
+      img.onerror = rej;
+      img.src = dataUrl;
+    });
+  }
+
+  imgcDrop.addEventListener('click', () => imgcFileInput.click());
+  imgcDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); imgcFileInput.click(); } });
+  imgcFileInput.addEventListener('change', (e) => { addImgcFiles(e.target.files); imgcFileInput.value = ''; });
+  bindZipDrop(imgcDrop, addImgcFiles);
+
+  imgcList.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { imgcItems = imgcItems.filter(x => x.id !== rm.dataset.rm); renderImgcList(); }
+  });
+
+  imgcDownloadBtn.addEventListener('click', async () => {
+    if (!imgcItems.length) return;
+    const quality = Number(imgcQuality.value) / 100;
+    const mime = imgcFormat.value;
+    const ext = mime === 'image/webp' ? 'webp' : 'jpg';
+    let saved = 0;
+    for (const it of imgcItems) {
+      const blob = await compressImageToBlob(it.dataUrl, quality, mime);
+      saved += it.file.size - blob.size;
+      const base = it.file.name.replace(/\.[^.]+$/, '');
+      downloadBlob(blob, base + '_压缩.' + ext);
+      await new Promise(r => setTimeout(r, 250));
+    }
+    showToast('已下载 ' + imgcItems.length + ' 张压缩图' + (saved > 0 ? '，共节省 ' + formatSize(saved) : ''));
+  });
+
+  // ===== PDF 合并 / 拆分（pdf-lib）=====
+  const pdfMergeDrop = document.getElementById('pdf-merge-drop');
+  const pdfMergeList = document.getElementById('pdf-merge-list');
+  const pdfMergeInput = document.getElementById('pdf-merge-input');
+  const pdfMergeDownload = document.getElementById('pdf-merge-download');
+  const pdfSplitDrop = document.getElementById('pdf-split-drop');
+  const pdfSplitInfo = document.getElementById('pdf-split-info');
+  const pdfSplitInput = document.getElementById('pdf-split-input');
+  const pdfSplitDownload = document.getElementById('pdf-split-download');
+
+  let pdfMergeItems = [];
+  let pdfSplitDoc = null;
+  let pdfSeq = 0;
+
+  function renderPdfMergeList() {
+    pdfMergeList.innerHTML = pdfMergeItems.map(it =>
+      '<li class="zip-item"><span class="name">' + escapeHtml(it.file.name) + '</span>' +
+      '<span class="size">' + formatSize(it.file.size) + '</span>' +
+      '<button data-rm="' + it.id + '">移除</button></li>'
+    ).join('');
+    pdfMergeDownload.disabled = pdfMergeItems.length < 2;
+  }
+
+  async function handlePdfSplitFile(file) {
+    if (!/\.pdf$/i.test(file.name)) { showToast('请选择 .pdf 文件'); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let doc;
+    try { doc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true }); }
+    catch (e) { showToast('无法读取该 PDF'); return; }
+    pdfSplitDoc = { file: file, pageCount: doc.getPageCount() };
+    pdfSplitInfo.hidden = false;
+    pdfSplitInfo.innerHTML = '共 ' + doc.getPageCount() + ' 页，输入要提取的页（如 1,3,5-7）：<input type="text" id="pdf-split-pages" value="1">';
+    pdfSplitDownload.disabled = false;
+  }
+
+  function parsePageRanges(str, total) {
+    const set = new Set();
+    String(str).split(',').forEach(part => {
+      part = part.trim();
+      if (!part) return;
+      if (part.includes('-')) {
+        const m = part.split('-').map(Number);
+        if (!isNaN(m[0]) && !isNaN(m[1])) {
+          for (let i = Math.max(1, m[0]); i <= Math.min(total, m[1]); i++) set.add(i - 1);
+        }
+      } else {
+        const n = Number(part);
+        if (!isNaN(n) && n >= 1 && n <= total) set.add(n - 1);
+      }
+    });
+    return [...set].sort((a, b) => a - b);
+  }
+
+  function addPdfMergeFiles(fileList) {
+    for (const f of fileList) {
+      if (!/\.pdf$/i.test(f.name)) continue;
+      pdfMergeItems.push({ id: 'p' + (++pdfSeq), file: f });
+    }
+    renderPdfMergeList();
+  }
+
+  pdfMergeDrop.addEventListener('click', () => pdfMergeInput.click());
+  pdfMergeDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pdfMergeInput.click(); } });
+  pdfMergeInput.addEventListener('change', (e) => { addPdfMergeFiles(e.target.files); pdfMergeInput.value = ''; });
+  bindZipDrop(pdfMergeDrop, addPdfMergeFiles);
+
+  pdfSplitDrop.addEventListener('click', () => pdfSplitInput.click());
+  pdfSplitDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pdfSplitInput.click(); } });
+  pdfSplitInput.addEventListener('change', (e) => { if (e.target.files[0]) handlePdfSplitFile(e.target.files[0]); pdfSplitInput.value = ''; });
+  bindZipDrop(pdfSplitDrop, (files) => handlePdfSplitFile(files[0]));
+
+  pdfMergeList.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { pdfMergeItems = pdfMergeItems.filter(x => x.id !== rm.dataset.rm); renderPdfMergeList(); }
+  });
+
+  pdfMergeDownload.addEventListener('click', async () => {
+    if (pdfMergeItems.length < 2) return;
+    const merged = await PDFLib.PDFDocument.create();
+    for (const it of pdfMergeItems) {
+      const bytes = new Uint8Array(await it.file.arrayBuffer());
+      const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+      const pages = await merged.copyPages(src, src.getPageIndices());
+      pages.forEach(p => merged.addPage(p));
+    }
+    const out = await merged.save();
+    downloadBytes(out, '合并.pdf', 'application/pdf');
+    showToast('已合并 ' + pdfMergeItems.length + ' 个 PDF');
+  });
+
+  pdfSplitDownload.addEventListener('click', async () => {
+    if (!pdfSplitDoc) return;
+    const input = document.getElementById('pdf-split-pages');
+    const pages = parsePageRanges(input.value, pdfSplitDoc.pageCount);
+    if (!pages.length) { showToast('请输入有效的页码'); return; }
+    const bytes = new Uint8Array(await pdfSplitDoc.file.arrayBuffer());
+    const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+    const out = await PDFLib.PDFDocument.create();
+    const copied = await out.copyPages(src, pages);
+    copied.forEach(p => out.addPage(p));
+    const result = await out.save();
+    downloadBytes(result, '拆分.pdf', 'application/pdf');
+    showToast('已提取 ' + pages.length + ' 页');
+  });
+
   // ===== 导出 =====
   function contentEmpty() {
     if (mode === 'wysiwyg') return editor.innerText.trim() === '' && !editor.querySelector('img');
@@ -1278,6 +1503,23 @@ ${bodyHtml}
     saveToHistory();
     if (mode === 'source') setMode('wysiwyg');
     window.print();
+  });
+
+  function getCurrentMarkdown() {
+    if (mode === 'source') return source.value;
+    return turndownService.turndown(editor.innerHTML).trim();
+  }
+  document.getElementById('btn-md').addEventListener('click', () => {
+    const md = getCurrentMarkdown();
+    if (!md.trim()) { alert('内容为空，请先输入或编辑'); return; }
+    downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), sanitizeFilename(deriveTitle()) + '.md');
+    showToast('已导出 Markdown');
+  });
+  document.getElementById('btn-html').addEventListener('click', () => {
+    if (contentEmpty()) { alert('内容为空，请先输入或编辑'); return; }
+    const full = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n<title>' + escapeHtml(deriveTitle()) + '</title>\n</head>\n<body>\n' + getExportHtml() + '\n</body>\n</html>';
+    downloadBlob(new Blob([full], { type: 'text/html;charset=utf-8' }), sanitizeFilename(deriveTitle()) + '.html');
+    showToast('已导出 HTML');
   });
 
   const SAMPLE = `# 项目周报：AI 辅助开发实践
