@@ -1,4 +1,4 @@
-# Markdown 转换器
+# Folio
 
 一个**所见即所得**的 Markdown 编辑器，可以把 Markdown 一键导出成 **Word（.doc）** 或 **PDF**。
 

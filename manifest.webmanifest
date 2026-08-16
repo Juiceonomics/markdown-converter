@@ -1,6 +1,6 @@
 {
-  "name": "Markdown 转换器",
-  "short_name": "MD转换器",
+  "name": "Folio",
+  "short_name": "Folio",
   "description": "所见即所得 Markdown 编辑器，一键导出 Word / PDF",
   "start_url": "./",
   "display": "standalone",
