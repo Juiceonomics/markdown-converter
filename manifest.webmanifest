@@ -1,0 +1,17 @@
+{
+  "name": "Markdown 转换器",
+  "short_name": "MD转换器",
+  "description": "所见即所得 Markdown 编辑器，一键导出 Word / PDF",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F6F3EC",
+  "theme_color": "#C1121F",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
