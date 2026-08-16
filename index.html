@@ -186,6 +186,7 @@
   .editor ul, .editor ol { padding-left: 1.7em; }
   .editor li { margin: .3em 0; }
   .editor input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
+  .editor .annot { background: #FFF3C4; border-bottom: 2px dotted #D9A900; border-radius: 2px; }
 
   footer.statusbar {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -305,6 +306,14 @@
   .repair-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
   .repair-actions { display: flex; gap: 8px; }
   .repair-actions button { font-size: 12px; padding: 6px 12px; }
+  .annot-add-label, .annot-list-label { font-size: 13px; font-weight: 600; color: var(--ink); margin: 6px 0 8px; }
+  .annot-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--hairline); }
+  .annot-item:last-child { border-bottom: none; }
+  .annot-item .main { flex: 1; min-width: 0; }
+  .annot-item .note { font-size: 13px; color: var(--ink); line-height: 1.5; }
+  .annot-item .ctx { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .annot-item .acts { display: flex; gap: 6px; flex: 0 0 auto; }
+  .annot-item .acts button { font-size: 12px; padding: 4px 10px; }
 
   @media (max-width: 760px) {
     .editor { padding: 32px 24px; }
@@ -409,6 +418,7 @@
     <div class="popover" id="hl-color-pop"></div>
   </div>
   <button data-cmd="removeFormat" data-tip="清除格式" data-tip-desc="移除选中文字的所有格式（含颜色高亮）">清除格式</button>
+  <button id="btn-annot" data-tip="批注" data-tip-desc="给选中文字添加批注（高亮 + 备注）">批注</button>
   <span class="sep"></span>
   <button data-cmd="formatBlock" data-value="<h1>" data-tip="一级标题" data-tip-desc="把当前段落设为一级标题">H1</button>
   <button data-cmd="formatBlock" data-value="<h2>" data-tip="二级标题" data-tip-desc="把当前段落设为二级标题">H2</button>
@@ -561,6 +571,24 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="annot-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="annot-title">
+    <div class="modal-head">
+      <div class="modal-title" id="annot-title">批注</div>
+      <button class="modal-close" id="annot-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="annot-add-label">为选中文字添加批注</div>
+      <textarea class="repair-input" id="annot-note" placeholder="输入批注内容…"></textarea>
+      <div class="repair-actions" style="margin-bottom: 16px;">
+        <button id="annot-save" class="primary">添加批注</button>
+      </div>
+      <div class="annot-list-label">已有批注</div>
+      <div id="annot-list"></div>
+    </div>
+  </div>
+</div>
+
 <script src="marked.min.js"></script>
 <script src="turndown.js"></script>
 <script src="turndown-plugin-gfm.js"></script>
@@ -602,6 +630,10 @@
   turndownService.addRule('keepStyledSpan', {
     filter: (node) => node.nodeName === 'SPAN' && node.hasAttribute('style'),
     replacement: (content, node) => '<span style="' + node.getAttribute('style') + '">' + content + '</span>'
+  });
+  turndownService.addRule('annot', {
+    filter: (node) => node.classList && node.classList.contains('annot'),
+    replacement: (content, node) => '<span class="annot" data-note="' + escapeHtml(node.getAttribute('data-note') || '') + '">' + content + '</span>'
   });
   turndownService.addRule('math', {
     filter: (node) => node.classList && (node.classList.contains('math-inline') || node.classList.contains('math-block')),
@@ -1603,6 +1635,88 @@
     downloadBlob(new Blob([docxResult.value], { type: 'text/plain;charset=utf-8' }), '提取文字.txt');
   });
 
+  // ===== 批注 =====
+  const annotModal = document.getElementById('annot-modal');
+  const annotNote = document.getElementById('annot-note');
+  const annotList = document.getElementById('annot-list');
+
+  function wrapWithNote(note) {
+    editor.focus();
+    restoreSelection();
+    const sel = window.getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) { showToast('请先在编辑器里选中要批注的文字'); return false; }
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) { showToast('请先选中要批注的文字'); return false; }
+    const span = document.createElement('span');
+    span.className = 'annot';
+    span.setAttribute('data-note', note);
+    try { range.surroundContents(span); }
+    catch (e) { const frag = range.extractContents(); span.appendChild(frag); range.insertNode(span); }
+    updateStatus();
+    return true;
+  }
+
+  function renderAnnotList() {
+    const items = editor.querySelectorAll('.annot');
+    if (!items.length) {
+      annotList.innerHTML = '<div class="hist-empty">还没有批注。选中文字后在上方添加。</div>';
+      return;
+    }
+    annotList.innerHTML = Array.from(items).map((s, i) =>
+      '<div class="annot-item">' +
+        '<div class="main">' +
+          '<div class="note">' + escapeHtml(s.getAttribute('data-note') || '') + '</div>' +
+          '<div class="ctx">' + escapeHtml(s.textContent.slice(0, 60)) + (s.textContent.length > 60 ? '…' : '') + '</div>' +
+        '</div>' +
+        '<div class="acts">' +
+          '<button data-locate="' + i + '">定位</button>' +
+          '<button data-del="' + i + '">删除</button>' +
+        '</div>' +
+      '</div>'
+    ).join('');
+  }
+
+  document.getElementById('btn-annot').addEventListener('click', () => {
+    annotNote.value = '';
+    renderAnnotList();
+    annotModal.hidden = false;
+    annotNote.focus();
+  });
+  document.getElementById('annot-close').addEventListener('click', () => { annotModal.hidden = true; });
+  annotModal.addEventListener('mousedown', (e) => { if (e.target === annotModal) annotModal.hidden = true; });
+  document.addEventListener('keydown', (e) => {
+    if (annotModal.hidden) return;
+    if (e.key === 'Escape') annotModal.hidden = true;
+  });
+
+  document.getElementById('annot-save').addEventListener('click', () => {
+    const note = annotNote.value.trim();
+    if (!note) { showToast('请输入批注内容'); return; }
+    if (wrapWithNote(note)) {
+      annotModal.hidden = true;
+      saveDraft();
+      showToast('已添加批注');
+    }
+  });
+
+  annotList.addEventListener('click', (e) => {
+    const items = editor.querySelectorAll('.annot');
+    const loc = e.target.closest('[data-locate]');
+    const del = e.target.closest('[data-del]');
+    if (loc) {
+      const s = items[Number(loc.dataset.locate)];
+      if (s) {
+        annotModal.hidden = true;
+        s.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        s.style.outline = '2px solid var(--accent)';
+        setTimeout(() => { s.style.outline = ''; }, 1500);
+      }
+    } else if (del) {
+      const s = items[Number(del.dataset.del)];
+      if (s) { s.replaceWith(document.createTextNode(s.textContent)); renderAnnotList(); saveDraft(); showToast('已删除批注'); }
+    }
+  });
+
   // ===== 导出 =====
   function contentEmpty() {
     if (mode === 'wysiwyg') return editor.innerText.trim() === '' && !editor.querySelector('img');
@@ -1619,6 +1733,15 @@
     d.querySelectorAll('.math-inline, .math-block').forEach(el => {
       el.replaceWith(document.createTextNode(el.getAttribute('data-tex') || el.textContent));
     });
+    const notes = [];
+    d.querySelectorAll('.annot').forEach(el => {
+      notes.push((el.getAttribute('data-note') || '') + ' —— ' + el.textContent.slice(0, 80));
+    });
+    if (notes.length) {
+      const sec = document.createElement('div');
+      sec.innerHTML = '<h2>批注</h2><ol>' + notes.map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ol>';
+      d.appendChild(sec);
+    }
     return d.innerHTML;
   }
   function deriveTitle() {
@@ -1673,6 +1796,7 @@
   blockquote { border-left: 3pt solid #888; margin-left: 0; padding-left: 10pt; color: #444; }
   img { max-width: 100%; }
   a { color: #0563c1; }
+  .annot { background: #FFF3C4; }
 </style>
 </head>
 <body>
