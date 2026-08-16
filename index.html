@@ -72,13 +72,16 @@
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   button.primary {
     background: var(--accent); border-color: var(--accent); color: #fff; border-radius: 999px;
-    box-shadow: 0 1px 2px rgba(193,18,31,.18);
+    box-shadow: 0 1px 2px rgba(27,26,23,.16);
   }
-  button.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(193,18,31,.28); }
+  button.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(27,26,23,.26); }
   button.outline { border-radius: 999px; border-color: var(--hairline-strong); }
   button.outline:hover { border-color: var(--ink); }
   button.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
   button.ghost:hover { background: #F3F0E9; color: var(--ink); }
+  .actions button:not(.primary):not(.outline) { border-color: transparent; background: transparent; color: var(--ink-2); }
+  .actions button:not(.primary):not(.outline):hover { background: #F3F0E9; color: var(--ink); }
+  .actions .sep { width: 1px; height: 20px; background: var(--hairline); margin: 0 2px; }
 
   /* 工具栏 */
   .toolbar {
@@ -268,10 +271,12 @@
   .hist-empty { color: var(--muted); text-align: center; padding: 36px 12px; font-size: 13px; }
 
   /* 视图切换标签 */
-  .tabbar { padding: 8px 28px; background: var(--sheet); border-bottom: 1px solid var(--hairline); overflow-x: auto; flex: 0 0 auto; }
-  .view-switch { display: flex; gap: 2px; background: #F0EDE6; border-radius: 999px; padding: 3px; width: max-content; margin: 0; }
-  .view-tab { font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 999px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; transition: background .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease); }
-  .view-tab.active { background: var(--sheet); color: var(--ink); box-shadow: 0 1px 3px rgba(27,26,23,.12); }
+  .tabbar { padding: 0 28px; background: var(--sheet); overflow-x: auto; flex: 0 0 auto; }
+  .view-switch { display: flex; gap: 26px; width: max-content; border-bottom: 1px solid var(--hairline); }
+  .view-tab { font-size: 14px; font-weight: 500; padding: 12px 2px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; position: relative; transition: color .18s var(--ease); }
+  .view-tab:hover { color: var(--ink); }
+  .view-tab.active { color: var(--ink); font-weight: 600; }
+  .view-tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
 
   /* 压缩工具 */
   .zip-tool { flex: 1; overflow: auto; background: var(--paper); padding: 36px 20px 80px; min-height: 0; }
@@ -304,7 +309,7 @@
   @media (max-width: 760px) {
     .editor { padding: 32px 24px; }
     header.masthead { flex-wrap: wrap; padding: 12px 16px; }
-    .tabbar { padding: 8px 16px; }
+    .tabbar { padding: 0 16px; }
     .stage { padding: 16px 10px 60px; }
     .zip-tool { padding: 16px 10px 60px; }
     .zip-grid { grid-template-columns: 1fr; }
@@ -342,8 +347,9 @@
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
     <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
-    <button id="btn-md" data-tip="导出 Markdown" data-tip-desc="导出为 .md 文件">导出 Markdown</button>
-    <button id="btn-html" data-tip="导出 HTML" data-tip-desc="导出为 .html 网页文件">导出 HTML</button>
+    <span class="sep"></span>
+    <button id="btn-md" class="outline" data-tip="导出 Markdown" data-tip-desc="导出为 .md 文件">导出 Markdown</button>
+    <button id="btn-html" class="outline" data-tip="导出 HTML" data-tip-desc="导出为 .html 网页文件">导出 HTML</button>
     <button id="btn-pdf" class="outline" data-tip="导出 PDF" data-tip-desc="通过浏览器打印对话框，选择「另存为 PDF」">导出 PDF</button>
     <button id="btn-word" class="primary" data-tip="导出 Word" data-tip-desc="导出为 .doc 文件，Word 可直接打开并保留样式">导出 Word</button>
   </div>
