@@ -27,7 +27,7 @@
 
 ## 使用方法
 
-直接双击打开 `index.html`，或部署到 GitHub Pages 在线访问。**无需安装、无需联网**（字体与公式已本地化）。
+直接双击打开 `index.html`，或访问在线版：[juiceonomics.github.io/markdown-converter](https://juiceonomics.github.io/markdown-converter/)。**无需安装、无需联网**（字体与公式已本地化）。
 
 1. 粘贴 Markdown，或点「载入文件」打开本地 `.md` 文件
 2. 用顶部工具栏编辑（字号、颜色、高亮、对齐等）

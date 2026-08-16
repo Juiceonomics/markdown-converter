@@ -18,7 +18,7 @@
     --sheet: #FFFFFF;        /* 纸页 */
     --ink: #1B1A17;          /* 暖黑 */
     --ink-2: #57544C;        /* 次级 */
-    --muted: #8E897C;        /* 弱化 */
+    --muted: #6E6A5E;        /* 弱化（≥4.5:1 对比度） */
     --hairline: #E8E3D8;     /* 暖发丝线 */
     --hairline-strong: #D7D0C0;
     --accent: #374151;       /* 石墨主色 */
@@ -189,7 +189,7 @@
     padding: 7px 20px; font-size: 12px; color: var(--muted);
     border-top: 1px solid var(--hairline); background: var(--sheet); flex: 0 0 auto;
   }
-  footer.statusbar .hint { color: #B3AD9F; }
+  footer.statusbar .hint { color: var(--muted); }
 
   /* 自定义 tooltip */
   .tooltip {
@@ -426,8 +426,8 @@
 </div>
 
 <div class="stage">
-  <div class="editor" id="editor" contenteditable="true"></div>
-  <textarea class="source" id="source" style="display:none" placeholder="# 在这里粘贴或编辑 Markdown 源码…"></textarea>
+  <div class="editor" id="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Markdown 编辑器"></div>
+  <textarea class="source" id="source" style="display:none" placeholder="# 在这里粘贴或编辑 Markdown 源码…" aria-label="Markdown 源码"></textarea>
 </div>
 
 <section class="zip-tool" id="zip-tool" hidden>
@@ -730,8 +730,8 @@
 
   function buildPopoverHTML(title, colors) {
     const swatches = colors.map(c => {
-      if (c === 'transparent') return '<button type="button" class="swatch swatch-none" data-color="transparent"></button>';
-      return '<button type="button" class="swatch" data-color="' + c + '" style="background:' + c + '"></button>';
+      if (c === 'transparent') return '<button type="button" class="swatch swatch-none" data-color="transparent" aria-label="无高亮"></button>';
+      return '<button type="button" class="swatch" data-color="' + c + '" style="background:' + c + '" aria-label="颜色 ' + c + '"></button>';
     }).join('');
     return '<div class="pop-label">' + title + '</div>'
       + '<div class="swatches">' + swatches + '</div>'
