@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Folio · Markdown → Word / PDF</title>
+<title>Folio · 本地工具箱</title>
 <meta name="theme-color" content="#374151">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
@@ -268,8 +268,9 @@
   .hist-empty { color: var(--muted); text-align: center; padding: 36px 12px; font-size: 13px; }
 
   /* 视图切换标签 */
-  .view-switch { display: flex; gap: 2px; background: #F0EDE6; border-radius: 999px; padding: 3px; }
-  .view-tab { font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 999px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; transition: background .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease); }
+  .tabbar { padding: 10px 16px; background: var(--sheet); border-bottom: 1px solid var(--hairline); overflow-x: auto; flex: 0 0 auto; }
+  .view-switch { display: flex; gap: 2px; background: #F0EDE6; border-radius: 999px; padding: 3px; width: max-content; margin: 0 auto; }
+  .view-tab { font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 999px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; transition: background .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease); }
   .view-tab.active { background: var(--sheet); color: var(--ink); box-shadow: 0 1px 3px rgba(27,26,23,.12); }
 
   /* 压缩工具 */
@@ -309,7 +310,7 @@
   }
 
   @media print {
-    .toprule, header.masthead, .toolbar, footer.statusbar, .tooltip { display: none !important; }
+    .toprule, header.masthead, .tabbar, .toolbar, footer.statusbar, .tooltip { display: none !important; }
     .stage { padding: 0; background: #fff; overflow: visible; }
     .editor { max-width: none; margin: 0; padding: 0; box-shadow: none; min-height: 0; border-radius: 0; }
     .editor:empty::before { content: none; }
@@ -330,16 +331,9 @@
     <div class="brand-mark">F</div>
     <div>
       <div class="title">Folio</div>
-      <div class="sub">Markdown → Word / PDF</div>
+      <div class="sub">本地工具箱 · 离线可用</div>
     </div>
   </div>
-  <nav class="view-switch" role="tablist" aria-label="功能切换">
-    <button class="view-tab active" id="tab-editor" role="tab" aria-selected="true" data-view="editor">编辑器</button>
-    <button class="view-tab" id="tab-zip" role="tab" aria-selected="false" data-view="zip">压缩工具</button>
-    <button class="view-tab" id="tab-imgpdf" role="tab" aria-selected="false" data-view="imgpdf">图片工具</button>
-    <button class="view-tab" id="tab-pdf" role="tab" aria-selected="false" data-view="pdf">PDF 工具</button>
-    <button class="view-tab" id="tab-repair" role="tab" aria-selected="false" data-view="repair">文档修复</button>
-  </nav>
   <div class="spacer"></div>
   <div class="actions" id="editor-actions">
     <button id="btn-load" data-tip="载入文件" data-tip-desc="打开本地 .md 或 .txt 文件">载入文件</button>
@@ -354,6 +348,16 @@
   </div>
   <input type="file" id="file-input" accept=".md,.markdown,.txt,text/markdown" hidden>
 </header>
+
+<div class="tabbar">
+  <nav class="view-switch" role="tablist" aria-label="功能切换">
+    <button class="view-tab active" id="tab-editor" role="tab" aria-selected="true" data-view="editor">编辑器</button>
+    <button class="view-tab" id="tab-zip" role="tab" aria-selected="false" data-view="zip">压缩工具</button>
+    <button class="view-tab" id="tab-imgpdf" role="tab" aria-selected="false" data-view="imgpdf">图片工具</button>
+    <button class="view-tab" id="tab-pdf" role="tab" aria-selected="false" data-view="pdf">PDF 工具</button>
+    <button class="view-tab" id="tab-repair" role="tab" aria-selected="false" data-view="repair">文档修复</button>
+  </nav>
+</div>
 
 <div class="toolbar" id="toolbar">
   <select id="font-family" data-tip="字体" data-tip-desc="给选中文字设置字体">
