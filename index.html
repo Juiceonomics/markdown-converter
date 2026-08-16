@@ -144,6 +144,10 @@
   .annot-sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
   .annot-sidebar-title { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--ink); }
   .annot-count { font-size: 12px; color: var(--muted); background: #F0EDE6; border-radius: 999px; padding: 2px 9px; }
+  .annot-head-right { display: flex; align-items: center; gap: 8px; }
+  .annot-sidebar-close { font-size: 18px; line-height: 1; padding: 2px 6px; border: none; background: transparent; color: var(--muted); cursor: pointer; }
+  .annot-sidebar-close:hover { color: var(--ink); }
+  .annot-sidebar.closed { display: none; }
   .annot-sidebar-body { flex: 1; overflow-y: auto; padding: 8px 12px; }
 
   /* 舞台与纸页 */
@@ -463,7 +467,10 @@
   <aside class="annot-sidebar" id="annot-sidebar" aria-label="批注列表">
     <div class="annot-sidebar-head">
       <span class="annot-sidebar-title">批注</span>
-      <span class="annot-count" id="annot-count">0</span>
+      <span class="annot-head-right">
+        <span class="annot-count" id="annot-count">0</span>
+        <button class="annot-sidebar-close" id="annot-sidebar-close" aria-label="关闭批注侧栏">×</button>
+      </span>
     </div>
     <div class="annot-sidebar-body" id="annot-sidebar-list"></div>
   </aside>
@@ -1666,6 +1673,9 @@
   const annotNote = document.getElementById('annot-note');
   const annotList = document.getElementById('annot-list');
   const annotSidebarList = document.getElementById('annot-sidebar-list');
+  const annotSidebar = document.getElementById('annot-sidebar');
+  function openAnnotSidebar() { annotSidebar.classList.remove('closed'); }
+  document.getElementById('annot-sidebar-close').addEventListener('click', () => { annotSidebar.classList.add('closed'); });
 
   function wrapWithNote(note) {
     editor.focus();
@@ -1729,6 +1739,7 @@
   annotSidebarList.addEventListener('click', handleAnnotClick);
 
   document.getElementById('btn-annot').addEventListener('click', () => {
+    openAnnotSidebar();
     annotNote.value = '';
     renderAllAnnots();
     annotModal.hidden = false;
