@@ -267,10 +267,33 @@
   .hist-actions .hist-del { color: var(--ink-2); }
   .hist-empty { color: var(--muted); text-align: center; padding: 36px 12px; font-size: 13px; }
 
+  /* 视图切换标签 */
+  .view-switch { display: flex; gap: 2px; background: #F0EDE6; border-radius: 999px; padding: 3px; }
+  .view-tab { font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 999px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; transition: background .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease); }
+  .view-tab.active { background: var(--sheet); color: var(--ink); box-shadow: 0 1px 3px rgba(27,26,23,.12); }
+
+  /* 压缩工具 */
+  .zip-tool { flex: 1; overflow: auto; background: var(--paper); padding: 36px 20px 80px; min-height: 0; }
+  .zip-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 960px; margin: 0 auto; }
+  .zip-card { background: var(--sheet); border-radius: 14px; padding: 26px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 14px 36px rgba(27,26,23,.08); display: flex; flex-direction: column; }
+  .zip-card h2 { font-family: var(--font-display); font-size: 18px; font-weight: 600; margin: 0 0 16px; }
+  .zip-drop { border: 2px dashed var(--hairline-strong); border-radius: 12px; padding: 32px 16px; text-align: center; color: var(--muted); font-size: 14px; cursor: pointer; transition: border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease); }
+  .zip-drop:hover, .zip-drop.over { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .zip-drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .zip-list { list-style: none; margin: 16px 0; padding: 0; flex: 1; min-height: 0; max-height: 320px; overflow: auto; }
+  .zip-item { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+  .zip-item:last-child { border-bottom: none; }
+  .zip-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .zip-item .size { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
+  .zip-item button { font-size: 12px; padding: 4px 10px; }
+  .zip-card > button { margin-top: auto; }
+
   @media (max-width: 760px) {
     .editor { padding: 32px 24px; }
     header.masthead { flex-wrap: wrap; padding: 12px 16px; }
     .stage { padding: 16px 10px 60px; }
+    .zip-tool { padding: 16px 10px 60px; }
+    .zip-grid { grid-template-columns: 1fr; }
   }
 
   @media print {
@@ -298,8 +321,12 @@
       <div class="sub">Markdown → Word / PDF</div>
     </div>
   </div>
+  <nav class="view-switch" role="tablist" aria-label="功能切换">
+    <button class="view-tab active" id="tab-editor" role="tab" aria-selected="true" data-view="editor">编辑器</button>
+    <button class="view-tab" id="tab-zip" role="tab" aria-selected="false" data-view="zip">压缩工具</button>
+  </nav>
   <div class="spacer"></div>
-  <div class="actions">
+  <div class="actions" id="editor-actions">
     <button id="btn-load" data-tip="载入文件" data-tip-desc="打开本地 .md 或 .txt 文件">载入文件</button>
     <button id="btn-sample" data-tip="示例" data-tip-desc="填入一份示例文档，方便快速体验">示例</button>
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
@@ -382,6 +409,25 @@
   <textarea class="source" id="source" style="display:none" placeholder="# 在这里粘贴或编辑 Markdown 源码…"></textarea>
 </div>
 
+<section class="zip-tool" id="zip-tool" hidden>
+  <div class="zip-grid">
+    <div class="zip-card">
+      <h2>打包成 ZIP</h2>
+      <div class="zip-drop" id="zip-drop-compress" role="button" tabindex="0" aria-label="选择要打包的文件">拖入文件到这里，或点击选择文件</div>
+      <ul class="zip-list" id="compress-list"></ul>
+      <button id="zip-download" class="primary" disabled>下载 .zip</button>
+    </div>
+    <div class="zip-card">
+      <h2>解压 ZIP</h2>
+      <div class="zip-drop" id="zip-drop-decompress" role="button" tabindex="0" aria-label="选择要解压的 zip 文件">拖入 .zip 文件到这里，或点击选择</div>
+      <ul class="zip-list" id="decompress-list"></ul>
+      <button id="unzip-download-all" disabled>下载全部文件</button>
+    </div>
+  </div>
+  <input type="file" id="zip-file-input" multiple hidden>
+  <input type="file" id="unzip-file-input" accept=".zip" hidden>
+</section>
+
 <footer class="statusbar">
   <span id="status">0 字符 · 0 词 · 富文本</span>
   <span class="hint">字号 / 颜色 / 高亮会保留在导出文件中；切换「Markdown 源码」时以内联 HTML 保留</span>
@@ -417,6 +463,7 @@
 <script src="turndown.js"></script>
 <script src="turndown-plugin-gfm.js"></script>
 <script src="highlight.min.js"></script>
+<script src="fflate.min.js"></script>
 <script defer src="katex/katex.min.js"></script>
 <script>
   const editor = document.getElementById('editor');
@@ -428,6 +475,7 @@
   const fontSize = document.getElementById('font-size');
 
   let mode = 'wysiwyg';
+  let view = 'editor'; // 'editor' | 'zip'
 
   marked.setOptions({ gfm: true, breaks: true });
 
@@ -738,16 +786,17 @@
     if (f) openFile(f);
   });
 
-  // 拖拽打开（带覆盖层提示）
+  // 拖拽打开（带覆盖层提示，仅在编辑器视图生效）
   const dropOverlay = document.getElementById('drop-overlay');
   let dragDepth = 0;
-  document.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; dropOverlay.classList.add('show'); });
+  document.addEventListener('dragenter', (e) => { e.preventDefault(); if (view !== 'editor') return; dragDepth++; dropOverlay.classList.add('show'); });
   document.addEventListener('dragleave', (e) => { e.preventDefault(); dragDepth = Math.max(0, dragDepth - 1); if (dragDepth === 0) dropOverlay.classList.remove('show'); });
   document.addEventListener('dragover', (e) => e.preventDefault());
   document.addEventListener('drop', (e) => {
     e.preventDefault();
     dragDepth = 0;
     dropOverlay.classList.remove('show');
+    if (view !== 'editor') return;
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
     if (!f) return;
     if (!/\.(md|markdown|txt)$/i.test(f.name)) { showToast('仅支持 .md / .markdown / .txt 文件'); return; }
@@ -909,6 +958,138 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
   }
+
+  // ===== 视图切换（编辑器 / 压缩工具）=====
+  const editorActions = document.getElementById('editor-actions');
+  const stageEl = document.querySelector('.stage');
+  const zipTool = document.getElementById('zip-tool');
+
+  function setView(v) {
+    view = v;
+    document.querySelectorAll('.view-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.view === v);
+      t.setAttribute('aria-selected', t.dataset.view === v);
+    });
+    const isEditor = v === 'editor';
+    editorActions.style.display = isEditor ? '' : 'none';
+    stageEl.style.display = isEditor ? '' : 'none';
+    toolbar.style.display = isEditor ? (mode === 'source' ? 'none' : 'flex') : 'none';
+    zipTool.hidden = isEditor;
+    if (isEditor) updateStatus(); else status.textContent = '压缩工具 · 打包 / 解压';
+  }
+  document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
+
+  // ===== 压缩 / 解压（fflate）=====
+  const compressDrop = document.getElementById('zip-drop-compress');
+  const decompressDrop = document.getElementById('zip-drop-decompress');
+  const compressList = document.getElementById('compress-list');
+  const decompressList = document.getElementById('decompress-list');
+  const zipFileInput = document.getElementById('zip-file-input');
+  const unzipFileInput = document.getElementById('unzip-file-input');
+  const zipDownloadBtn = document.getElementById('zip-download');
+  const unzipAllBtn = document.getElementById('unzip-download-all');
+
+  let compressItems = [];
+  let unzippedFiles = null;
+  let zipSeq = 0;
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(2) + ' MB';
+  }
+  function downloadBytes(uint8, filename, mime) {
+    downloadBlob(new Blob([uint8], { type: mime }), filename);
+  }
+
+  function addCompressFiles(fileList) {
+    for (const f of fileList) compressItems.push({ id: 'f' + (++zipSeq), file: f });
+    renderCompressList();
+  }
+  function renderCompressList() {
+    compressList.innerHTML = compressItems.map(it =>
+      '<li class="zip-item"><span class="name">' + escapeHtml(it.file.name) + '</span>' +
+      '<span class="size">' + formatSize(it.file.size) + '</span>' +
+      '<button data-rm="' + it.id + '">移除</button></li>'
+    ).join('');
+    zipDownloadBtn.disabled = compressItems.length === 0;
+  }
+
+  async function handleZipFile(file) {
+    if (!/\.zip$/i.test(file.name)) { showToast('请选择 .zip 文件'); return; }
+    const buf = new Uint8Array(await file.arrayBuffer());
+    try {
+      unzippedFiles = fflate.unzipSync(buf);
+    } catch (err) {
+      unzippedFiles = null;
+      decompressList.innerHTML = '';
+      unzipAllBtn.disabled = true;
+      showToast('解压失败：可能不是有效的 zip 或已加密');
+      return;
+    }
+    renderDecompressList();
+  }
+  function renderDecompressList() {
+    if (!unzippedFiles) return;
+    const names = Object.keys(unzippedFiles);
+    decompressList.innerHTML = names.map((n, i) =>
+      '<li class="zip-item"><span class="name">' + escapeHtml(n) + '</span>' +
+      '<span class="size">' + formatSize(unzippedFiles[n].length) + '</span>' +
+      '<button data-dl="' + i + '">下载</button></li>'
+    ).join('');
+    unzipAllBtn.disabled = names.length === 0;
+  }
+
+  function bindZipDrop(el, onFiles) {
+    el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('over'); });
+    el.addEventListener('dragleave', () => el.classList.remove('over'));
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove('over');
+      if (e.dataTransfer.files && e.dataTransfer.files.length) onFiles(e.dataTransfer.files);
+    });
+  }
+
+  compressDrop.addEventListener('click', () => zipFileInput.click());
+  compressDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); zipFileInput.click(); } });
+  zipFileInput.addEventListener('change', (e) => { addCompressFiles(e.target.files); zipFileInput.value = ''; });
+  bindZipDrop(compressDrop, addCompressFiles);
+
+  decompressDrop.addEventListener('click', () => unzipFileInput.click());
+  decompressDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); unzipFileInput.click(); } });
+  unzipFileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleZipFile(e.target.files[0]); unzipFileInput.value = ''; });
+  bindZipDrop(decompressDrop, (files) => handleZipFile(files[0]));
+
+  compressList.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { compressItems = compressItems.filter(x => x.id !== rm.dataset.rm); renderCompressList(); }
+  });
+  decompressList.addEventListener('click', (e) => {
+    const dl = e.target.closest('[data-dl]');
+    if (!dl || !unzippedFiles) return;
+    const names = Object.keys(unzippedFiles);
+    const name = names[Number(dl.dataset.dl)];
+    downloadBytes(unzippedFiles[name], name.split('/').pop(), 'application/octet-stream');
+  });
+
+  zipDownloadBtn.addEventListener('click', async () => {
+    if (!compressItems.length) return;
+    const entries = {};
+    for (const it of compressItems) {
+      entries[it.file.name] = new Uint8Array(await it.file.arrayBuffer());
+    }
+    downloadBytes(fflate.zipSync(entries), '打包.zip', 'application/zip');
+    showToast('已打包 ' + compressItems.length + ' 个文件');
+  });
+  unzipAllBtn.addEventListener('click', () => {
+    if (!unzippedFiles) return;
+    const names = Object.keys(unzippedFiles);
+    names.forEach((name, i) => {
+      setTimeout(() => downloadBytes(unzippedFiles[name], name.split('/').pop(), 'application/octet-stream'), i * 300);
+    });
+    showToast('开始下载 ' + names.length + ' 个文件');
+  });
 
   // ===== 导出 =====
   function contentEmpty() {
