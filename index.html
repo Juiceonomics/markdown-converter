@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Folio · Markdown → Word / PDF</title>
-<meta name="theme-color" content="#C1121F">
+<meta name="theme-color" content="#374151">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,9 +21,9 @@
     --muted: #8E897C;        /* 弱化 */
     --hairline: #E8E3D8;     /* 暖发丝线 */
     --hairline-strong: #D7D0C0;
-    --accent: #C1121F;       /* 刊头深红 */
-    --accent-strong: #9D0F1A;
-    --accent-soft: #F7E9EA;  /* 浅红晕 */
+    --accent: #374151;       /* 石墨主色 */
+    --accent-strong: #1F2937;
+    --accent-soft: #E9EDF0;  /* 浅灰晕 */
     --font-display: "Libre Bodoni", "Noto Serif SC", "Source Han Serif SC", "STSong", "SimSun", Georgia, serif;
     --font-serif: "Noto Serif SC", "Source Han Serif SC", "STSong", "SimSun", Georgia, serif;
     --font-ui: "Public Sans", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
@@ -174,7 +174,7 @@
   .math-inline { display: inline; }
   .math-block { display: block; text-align: center; margin: 1.1em 0; }
   .math-block .katex-display { margin: 0; }
-  .editor blockquote { border-left: 3px solid var(--accent); margin: 1.1em 0; padding: .4em 1.2em; background: var(--accent-soft); color: #4A3A3C; border-radius: 0 8px 8px 0; }
+  .editor blockquote { border-left: 3px solid var(--accent); margin: 1.1em 0; padding: .4em 1.2em; background: var(--accent-soft); color: #374151; border-radius: 0 8px 8px 0; }
   .editor table { border-collapse: collapse; margin: 1.1em 0; }
   .editor th, .editor td { border: 1px solid var(--hairline-strong); padding: 7px 13px; }
   .editor th { background: #F6F3EC; font-weight: 600; }
@@ -504,7 +504,7 @@
     }).join('');
     return '<div class="pop-label">' + title + '</div>'
       + '<div class="swatches">' + swatches + '</div>'
-      + '<div class="pop-custom"><span>自定义</span><input type="color" class="custom-color" value="#C1121F"></div>'
+      + '<div class="pop-custom"><span>自定义</span><input type="color" class="custom-color" value="#374151"></div>'
       + '<div class="pop-preview"><span class="preview-dot"></span><span class="preview-text">当前选择</span></div>'
       + '<div class="pop-actions"><button type="button" class="confirm">确认填充</button><button type="button" class="cancel">取消</button></div>';
   }
