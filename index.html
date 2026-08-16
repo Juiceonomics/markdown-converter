@@ -295,6 +295,10 @@
   .imgc-label select { font-family: var(--font-ui); font-size: 13px; padding: 4px 6px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: #fff; color: var(--ink); }
   .pdf-split-info { font-size: 13px; color: var(--ink-2); margin: 12px 0; }
   .pdf-split-info input[type="text"] { font-family: var(--font-ui); font-size: 13px; padding: 5px 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; width: 150px; margin: 0 4px; }
+  .repair-input { width: 100%; min-height: 92px; resize: vertical; border: 1px solid var(--hairline-strong); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; color: var(--ink); background: #fff; margin-bottom: 10px; box-sizing: border-box; }
+  .repair-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .repair-actions { display: flex; gap: 8px; }
+  .repair-actions button { font-size: 12px; padding: 6px 12px; }
 
   @media (max-width: 760px) {
     .editor { padding: 32px 24px; }
@@ -334,6 +338,7 @@
     <button class="view-tab" id="tab-zip" role="tab" aria-selected="false" data-view="zip">压缩工具</button>
     <button class="view-tab" id="tab-imgpdf" role="tab" aria-selected="false" data-view="imgpdf">图片工具</button>
     <button class="view-tab" id="tab-pdf" role="tab" aria-selected="false" data-view="pdf">PDF 工具</button>
+    <button class="view-tab" id="tab-repair" role="tab" aria-selected="false" data-view="repair">文档修复</button>
   </nav>
   <div class="spacer"></div>
   <div class="actions" id="editor-actions">
@@ -485,6 +490,33 @@
   </div>
   <input type="file" id="pdf-merge-input" accept=".pdf" multiple hidden>
   <input type="file" id="pdf-split-input" accept=".pdf" hidden>
+</section>
+
+<section class="zip-tool" id="repair-tool" hidden>
+  <div class="zip-grid">
+    <div class="zip-card">
+      <h2>乱码修复</h2>
+      <textarea class="repair-input" id="repair-text" placeholder="粘贴乱码文字…"></textarea>
+      <div class="zip-drop" id="repair-drop" role="button" tabindex="0" aria-label="选择乱码文件">或拖入乱码文件（如乱码的 .txt / .csv）</div>
+      <button id="repair-fix" class="primary">尝试修复</button>
+      <textarea class="repair-input" id="repair-result" placeholder="修复结果会显示在这里" readonly></textarea>
+      <div class="repair-actions">
+        <button id="repair-copy">复制结果</button>
+        <button id="repair-download">下载 .txt</button>
+      </div>
+    </div>
+    <div class="zip-card">
+      <h2>Word 文字提取</h2>
+      <div class="zip-drop" id="docx-drop" role="button" tabindex="0" aria-label="选择 Word 文档">拖入 .docx / .doc 到这里，或点击选择（损坏文档也能抢救文字）</div>
+      <textarea class="repair-input" id="docx-result" placeholder="提取出的文字会显示在这里" readonly></textarea>
+      <div class="repair-actions">
+        <button id="docx-copy">复制文字</button>
+        <button id="docx-download">下载 .txt</button>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="repair-file-input" hidden>
+  <input type="file" id="docx-file-input" accept=".docx,.doc" hidden>
 </section>
 
 <footer class="statusbar">
@@ -1026,6 +1058,7 @@
   const zipTool = document.getElementById('zip-tool');
   const imgpdfTool = document.getElementById('imgpdf-tool');
   const pdfTool = document.getElementById('pdf-tool');
+  const repairTool = document.getElementById('repair-tool');
 
   function setView(v) {
     view = v;
@@ -1040,10 +1073,12 @@
     zipTool.hidden = (v !== 'zip');
     imgpdfTool.hidden = (v !== 'imgpdf');
     pdfTool.hidden = (v !== 'pdf');
+    repairTool.hidden = (v !== 'repair');
     if (isEditor) updateStatus();
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
-    else status.textContent = 'PDF 工具 · 合并 / 拆分';
+    else if (v === 'pdf') status.textContent = 'PDF 工具 · 合并 / 拆分';
+    else status.textContent = '文档修复 · 乱码 / 文字提取';
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
@@ -1418,6 +1453,143 @@
     const result = await out.save();
     downloadBytes(result, '拆分.pdf', 'application/pdf');
     showToast('已提取 ' + pages.length + ' 页');
+  });
+
+  // ===== 文档修复：乱码修复 / Word 文字提取 =====
+  const repairText = document.getElementById('repair-text');
+  const repairResult = document.getElementById('repair-result');
+  const repairDrop = document.getElementById('repair-drop');
+  const repairFileInput = document.getElementById('repair-file-input');
+  const docxDrop = document.getElementById('docx-drop');
+  const docxResult = document.getElementById('docx-result');
+  const docxFileInput = document.getElementById('docx-file-input');
+
+  let repairBytes = null;
+
+  function decodeWith(bytes, enc) {
+    try { return new TextDecoder(enc).decode(bytes); } catch (e) { return null; }
+  }
+  function fixLatin1ToUtf8(str) {
+    const bytes = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) {
+      const c = str.charCodeAt(i);
+      if (c > 255) return null;
+      bytes[i] = c;
+    }
+    try { return new TextDecoder('utf-8').decode(bytes); } catch (e) { return null; }
+  }
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => showToast('已复制'), () => { fallbackCopy(text); showToast('已复制'); });
+    } else { fallbackCopy(text); showToast('已复制'); }
+  }
+
+  repairDrop.addEventListener('click', () => repairFileInput.click());
+  repairDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); repairFileInput.click(); } });
+  repairFileInput.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    repairBytes = new Uint8Array(await f.arrayBuffer());
+    showToast('已载入文件：' + f.name);
+    repairFileInput.value = '';
+  });
+  bindZipDrop(repairDrop, async (files) => {
+    if (files[0]) { repairBytes = new Uint8Array(await files[0].arrayBuffer()); showToast('已载入文件：' + files[0].name); }
+  });
+
+  document.getElementById('repair-fix').addEventListener('click', () => {
+    const candidates = [];
+    const seen = new Set();
+    if (repairBytes) {
+      ['utf-8', 'gb18030', 'big5', 'shift_jis', 'euc-kr', 'windows-1252'].forEach(enc => {
+        const t = decodeWith(repairBytes, enc);
+        if (t && !seen.has(t)) { seen.add(t); candidates.push({ label: enc, text: t }); }
+      });
+    }
+    if (repairText.value.trim()) {
+      const s = repairText.value.trim();
+      const fixed = fixLatin1ToUtf8(s);
+      if (fixed && fixed !== s && !seen.has(fixed)) { seen.add(fixed); candidates.push({ label: 'Latin-1 → UTF-8', text: fixed }); }
+    }
+    if (!candidates.length) { showToast('没有可尝试的修复'); repairResult.value = ''; return; }
+    repairResult.value = candidates.map(c => '【' + c.label + '】\n' + c.text).join('\n\n');
+    showToast('已尝试 ' + candidates.length + ' 种方案');
+  });
+  document.getElementById('repair-copy').addEventListener('click', () => {
+    if (repairResult.value) copyToClipboard(repairResult.value); else showToast('没有可复制的结果');
+  });
+  document.getElementById('repair-download').addEventListener('click', () => {
+    if (!repairResult.value) { showToast('没有可下载的结果'); return; }
+    downloadBlob(new Blob([repairResult.value], { type: 'text/plain;charset=utf-8' }), '修复结果.txt');
+  });
+
+  function decodeXmlEntities(s) {
+    return s
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => String.fromCodePoint(parseInt(h, 16)))
+      .replace(/&#(\d+);/g, (m, d) => String.fromCodePoint(Number(d)))
+      .replace(/&amp;/g, '&');
+  }
+  function extractDocxText(xml) {
+    const paras = xml.split(/<w:p[ >]/).slice(1);
+    const lines = [];
+    for (const part of paras) {
+      const texts = [];
+      const re = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+      let m;
+      while ((m = re.exec(part)) !== null) texts.push(m[1]);
+      const line = decodeXmlEntities(texts.join(''));
+      if (line.trim()) lines.push(line.trim());
+    }
+    return lines.join('\n');
+  }
+  function extractPrintableRuns(bytes) {
+    const text = new TextDecoder('utf-8').decode(bytes);
+    const runs = text.match(/[一-龥a-zA-Z0-9　-〿＀-￯.,;:!?()（）【】「」"'\-—\n ]{3,}/g) || [];
+    return runs.join('\n');
+  }
+  async function handleDocx(file) {
+    if (!/\.(docx|doc)$/i.test(file.name)) { showToast('请选择 .docx 或 .doc 文件'); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let result = '';
+    if (/\.docx$/i.test(file.name)) {
+      try {
+        const unzipped = fflate.unzipSync(bytes);
+        const docXml = unzipped['word/document.xml'];
+        if (!docXml) { showToast('该 docx 里找不到 document.xml'); return; }
+        result = extractDocxText(new TextDecoder('utf-8').decode(docXml));
+      } catch (e) {
+        showToast('解析失败，尝试提取可读文字…');
+        result = extractPrintableRuns(bytes);
+      }
+    } else {
+      result = extractPrintableRuns(bytes);
+    }
+    if (!result.trim()) { showToast('没有提取到文字'); return; }
+    docxResult.value = result;
+    showToast('已提取 ' + result.length + ' 个字符');
+  }
+
+  docxDrop.addEventListener('click', () => docxFileInput.click());
+  docxDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); docxFileInput.click(); } });
+  docxFileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleDocx(e.target.files[0]); docxFileInput.value = ''; });
+  bindZipDrop(docxDrop, (files) => { if (files[0]) handleDocx(files[0]); });
+
+  document.getElementById('docx-copy').addEventListener('click', () => {
+    if (docxResult.value) copyToClipboard(docxResult.value); else showToast('没有可复制的文字');
+  });
+  document.getElementById('docx-download').addEventListener('click', () => {
+    if (!docxResult.value) { showToast('没有可下载的文字'); return; }
+    downloadBlob(new Blob([docxResult.value], { type: 'text/plain;charset=utf-8' }), '提取文字.txt');
   });
 
   // ===== 导出 =====
