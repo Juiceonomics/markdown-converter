@@ -934,7 +934,9 @@
   }
   btnSource.addEventListener('click', () => setMode(mode === 'wysiwyg' ? 'source' : 'wysiwyg'));
 
+  let currentFileBase = null; // 导入文件的原名（去扩展名），导出时默认用它
   function openFile(f) {
+    currentFileBase = (f.name || '').replace(/\.[^.]+$/, '') || null;
     const reader = new FileReader();
     reader.onload = () => {
       if (mode === 'source') setMode('wysiwyg');
@@ -971,6 +973,7 @@
 
   document.getElementById('btn-sample').addEventListener('click', () => {
     if (mode === 'source') setMode('wysiwyg');
+    currentFileBase = null;
     editor.innerHTML = mdToHtml(SAMPLE);
     updateStatus();
     renderAllAnnots();
@@ -979,6 +982,7 @@
   document.getElementById('btn-clear').addEventListener('click', () => {
     editor.innerHTML = '';
     source.value = '';
+    currentFileBase = null;
     localStorage.removeItem('folio.draft');
     updateStatus();
     renderAllAnnots();
@@ -1001,6 +1005,7 @@
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
       html: getExportHtml(),
       title: deriveTitle(),
+      file: currentFileBase,
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 200),
       savedAt: Date.now()
     }));
@@ -1018,6 +1023,7 @@
     try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
     if (draft && draft.html) {
       editor.innerHTML = draft.html;
+      currentFileBase = draft.file || null;
       updateStatus();
       renderAllAnnots();
       showToast('已恢复上次的草稿');
@@ -1807,11 +1813,15 @@
     URL.revokeObjectURL(url);
   }
 
+  function deriveBaseName() {
+    return sanitizeFilename(currentFileBase || deriveTitle());
+  }
+
   document.getElementById('btn-word').addEventListener('click', () => {
     if (contentEmpty()) { alert('内容为空，请先输入或编辑'); return; }
     saveToHistory();
     const bodyHtml = getWordBodyHtml();
-    const title = sanitizeFilename(deriveTitle());
+    const title = deriveBaseName();
     const blob = new Blob(['﻿', buildWordHtml(title, bodyHtml)], { type: 'application/msword' });
     downloadBlob(blob, title + '.doc');
   });
@@ -1855,7 +1865,10 @@ ${bodyHtml}
     if (contentEmpty()) { alert('内容为空，请先输入或编辑'); return; }
     saveToHistory();
     if (mode === 'source') setMode('wysiwyg');
+    const prevTitle = document.title;
+    document.title = deriveBaseName(); // 让打印对话框默认文件名用当前文档名
     window.print();
+    document.title = prevTitle;
   });
 
   function getCurrentMarkdown() {
@@ -1865,13 +1878,13 @@ ${bodyHtml}
   document.getElementById('btn-md').addEventListener('click', () => {
     const md = getCurrentMarkdown();
     if (!md.trim()) { alert('内容为空，请先输入或编辑'); return; }
-    downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), sanitizeFilename(deriveTitle()) + '.md');
+    downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), deriveBaseName() + '.md');
     showToast('已导出 Markdown');
   });
   document.getElementById('btn-html').addEventListener('click', () => {
     if (contentEmpty()) { alert('内容为空，请先输入或编辑'); return; }
     const full = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n<title>' + escapeHtml(deriveTitle()) + '</title>\n</head>\n<body>\n' + getExportHtml() + '\n</body>\n</html>';
-    downloadBlob(new Blob([full], { type: 'text/html;charset=utf-8' }), sanitizeFilename(deriveTitle()) + '.html');
+    downloadBlob(new Blob([full], { type: 'text/html;charset=utf-8' }), deriveBaseName() + '.html');
     showToast('已导出 HTML');
   });
 
