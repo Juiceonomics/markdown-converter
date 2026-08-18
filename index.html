@@ -371,6 +371,7 @@
     <button id="btn-load" data-tip="载入文件" data-tip-desc="打开本地 .md 或 .txt 文件">载入文件</button>
     <button id="btn-sample" data-tip="示例" data-tip-desc="填入一份示例文档，方便快速体验">示例</button>
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
+    <button id="btn-versions" data-tip="版本快照" data-tip-desc="自动保存的版本快照，可恢复到任意历史版本">版本</button>
     <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
     <span class="sep"></span>
@@ -613,6 +614,19 @@
   </div>
 </div>
 <input type="file" id="history-import-input" accept=".json,application/json" hidden>
+
+<div class="modal-backdrop" id="versions-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="versions-title">
+    <div class="modal-head">
+      <div class="modal-title" id="versions-title">版本快照</div>
+      <button class="modal-close" id="versions-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body" id="versions-list"></div>
+    <div class="modal-foot">
+      <button id="versions-clear">清空全部快照</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-backdrop" id="confirm-modal" hidden>
   <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
@@ -1055,10 +1069,11 @@
   let draftTimer;
   function scheduleDraftSave() {
     clearTimeout(draftTimer);
-    draftTimer = setTimeout(saveDraft, 800);
+    draftTimer = setTimeout(() => { saveDraft(); takeSnapshot(); }, 800);
   }
   editor.addEventListener('input', scheduleDraftSave);
   source.addEventListener('input', scheduleDraftSave);
+  window.addEventListener('beforeunload', takeSnapshot);
 
   function restoreDraft() {
     let draft = null;
@@ -1205,6 +1220,95 @@
       showToast('已导入备份（历史 ' + (data.history ? data.history.length : 0) + ' 条）');
     };
     reader.readAsText(f, 'utf-8');
+  });
+
+  // ===== 版本快照 =====
+  const SNAPSHOTS_KEY = 'folio.snapshots';
+  const SNAPSHOT_MAX = 30;
+  function getSnapshots() {
+    try { return JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function setSnapshots(list) { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(list)); }
+  function takeSnapshot() {
+    if (contentEmpty()) return;
+    const html = getExportHtml();
+    const snaps = getSnapshots();
+    if (snaps[0] && snaps[0].html === html) return; // 内容没变就不存
+    snaps.unshift({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      title: deriveTitle(),
+      file: currentFileBase,
+      html: html,
+      text: (mode === 'source' ? source.value : editor.innerText).slice(0, 120),
+      savedAt: Date.now()
+    });
+    setSnapshots(snaps.slice(0, SNAPSHOT_MAX));
+  }
+
+  const versionsModal = document.getElementById('versions-modal');
+  const versionsList = document.getElementById('versions-list');
+  const btnVersions = document.getElementById('btn-versions');
+
+  function renderVersions() {
+    const snaps = getSnapshots();
+    if (!snaps.length) {
+      versionsList.innerHTML = '<div class="hist-empty">还没有快照。编辑时（停顿约 1 秒）会自动保存最近 ' + SNAPSHOT_MAX + ' 个版本。</div>';
+      return;
+    }
+    versionsList.innerHTML = snaps.map((s, i) =>
+      '<div class="hist-item">' +
+        '<div class="hist-main">' +
+          '<div class="hist-title">' + escapeHtml(s.title || '未命名') + '</div>' +
+          '<div class="hist-meta">' + new Date(s.savedAt).toLocaleString('zh-CN', { hour12: false }) + (i === 0 ? ' · 最近' : '') + '</div>' +
+          '<div class="hist-snippet">' + escapeHtml(s.text || '') + '</div>' +
+        '</div>' +
+        '<div class="hist-actions">' +
+          '<button data-res="' + i + '">恢复</button>' +
+          '<button class="hist-del" data-dels="' + i + '">删除</button>' +
+        '</div>' +
+      '</div>'
+    ).join('');
+  }
+  function openVersions() { renderVersions(); versionsModal.hidden = false; document.getElementById('versions-close').focus(); }
+  function closeVersions() { versionsModal.hidden = true; btnVersions.focus(); }
+
+  btnVersions.addEventListener('click', openVersions);
+  document.getElementById('versions-close').addEventListener('click', closeVersions);
+  versionsModal.addEventListener('mousedown', (e) => { if (e.target === versionsModal) closeVersions(); });
+  document.addEventListener('keydown', (e) => {
+    if (versionsModal.hidden) return;
+    if (e.key === 'Escape') closeVersions();
+  });
+
+  versionsList.addEventListener('click', (e) => {
+    const res = e.target.closest('[data-res]');
+    const del = e.target.closest('[data-dels]');
+    const snaps = getSnapshots();
+    if (res) {
+      const s = snaps[Number(res.dataset.res)];
+      if (s) {
+        editor.innerHTML = s.html;
+        currentFileBase = s.file || null;
+        updateStatus();
+        renderAllAnnots();
+        saveDraft();
+        closeVersions();
+        showToast('已恢复到该版本');
+      }
+    } else if (del) {
+      setSnapshots(snaps.filter((x, i) => i !== Number(del.dataset.dels)));
+      renderVersions();
+      showToast('已删除该快照');
+    }
+  });
+
+  document.getElementById('versions-clear').addEventListener('click', async () => {
+    if (!getSnapshots().length) return;
+    if (await confirmDialog('确定清空全部版本快照？')) {
+      setSnapshots([]);
+      renderVersions();
+      showToast('已清空全部快照');
+    }
   });
 
   // toast 提示
