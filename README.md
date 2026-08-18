@@ -18,7 +18,7 @@
 **实用工具**
 
 - 📦 打包压缩包：ZIP / TAR / TAR.GZ / GZ（单文件）
-- 📂 解压压缩包：支持 ZIP / TAR / TAR.GZ / GZ，查看内容并下载文件
+- 📂 解压压缩包：支持 ZIP / TAR / TAR.GZ / GZ / 7Z / RAR（7Z、RAR 用 7-Zip WASM，懒加载），查看内容并下载文件
 - 🖼 图片转 PDF：拖入一张或多张图片，合成多页 PDF
 - 🗜 图片压缩：拖入图片压缩体积（质量可调，WebP / JPEG）
 - 🔗 PDF 合并：多个 PDF 合成一个
@@ -44,7 +44,8 @@
 | `turndown.js` / `turndown-plugin-gfm.js` | HTML → Markdown（含表格 / 任务列表） |
 | `highlight.min.js` / `github.min.css` | 代码语法高亮 |
 | `katex/` | KaTeX 数学公式渲染（JS + CSS + 字体，完整本地化） |
-| `fflate.min.js` | ZIP 压缩 / 解压 |
+| `fflate.min.js` | ZIP / GZ / TAR 压缩 / 解压 |
+| `sevenzip-wasm.js` / `.wasm` | 7z / RAR 解压（懒加载） |
 | `jspdf.umd.min.js` | 图片转 PDF |
 | `pdf-lib.min.js` | PDF 合并 / 拆分 |
 
@@ -53,7 +54,7 @@
 - 导出 Word 用的是 `.doc`（HTML 包装），Word 能直接打开并保留格式，但不是原生 `.docx`
 - 导出 PDF 依赖浏览器打印（另存为 PDF）
 - 公式在 Word 中会降级为原始 TeX 文本（Word 原生不支持 KaTeX 排版）
-- 解压只能「查看 + 下载」，不能直接解压成桌面文件夹；带密码的加密压缩包不支持；RAR / 7z 暂不支持
+- 解压只能「查看 + 下载」，不能直接解压成桌面文件夹；带密码的加密压缩包不支持；RAR 只能解压不能打包（RAR 压缩算法为专有格式）
 - PDF 合并 / 拆分不支持加密 PDF
 - 历史记录存在浏览器 localStorage，不跨设备同步
 - 老式 `.doc` 的文字提取是「提取可读文字」，质量有限；建议用 Word 另存为 `.docx` 后提取更完整

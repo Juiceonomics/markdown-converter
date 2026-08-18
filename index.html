@@ -496,13 +496,13 @@
     </div>
     <div class="zip-card">
       <h2>解压压缩包</h2>
-      <div class="zip-drop" id="zip-drop-decompress" role="button" tabindex="0" aria-label="选择要解压的压缩包">拖入 .zip / .tar / .gz 到这里，或点击选择</div>
+      <div class="zip-drop" id="zip-drop-decompress" role="button" tabindex="0" aria-label="选择要解压的压缩包">拖入 .zip / .tar / .gz / .7z / .rar 到这里，或点击选择</div>
       <ul class="zip-list" id="decompress-list"></ul>
       <button id="unzip-download-all" disabled>下载全部文件</button>
     </div>
   </div>
   <input type="file" id="zip-file-input" multiple hidden>
-  <input type="file" id="unzip-file-input" accept=".zip,.tar,.tar.gz,.tgz,.gz" hidden>
+  <input type="file" id="unzip-file-input" accept=".zip,.tar,.tar.gz,.tgz,.gz,.7z,.rar" hidden>
 </section>
 
 <section class="zip-tool" id="imgpdf-tool" hidden>
@@ -1293,8 +1293,60 @@
     return out;
   }
 
+  // 7z / RAR 解压（sevenzip-wasm，懒加载）
+  let szInst = null;
+  let szScriptPromise = null;
+  function loadSevenZipScript() {
+    if (window.SevenZipWasm) return Promise.resolve(window.SevenZipWasm);
+    if (szScriptPromise) return szScriptPromise;
+    szScriptPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'sevenzip-wasm.js';
+      s.onload = () => resolve(window.SevenZipWasm);
+      s.onerror = () => { szScriptPromise = null; reject(new Error('加载 7-Zip 失败')); };
+      document.head.appendChild(s);
+    });
+    return szScriptPromise;
+  }
+  function walkFs(fs, path, out) {
+    let entries;
+    try { entries = fs.readdir(path); } catch (e) { return; }
+    for (const name of entries) {
+      if (name === '.' || name === '..' || name === 'dev' || name === 'tmp') continue;
+      const p = (path === '/' ? '' : path) + '/' + name;
+      let st;
+      try { st = fs.stat(p); } catch (e) { continue; }
+      if (fs.isDir(st.mode)) walkFs(fs, p, out);
+      else { try { out.push({ name: p.replace(/^\//, ''), bytes: fs.readFile(p) }); } catch (e) {} }
+    }
+  }
+  async function handle7zRar(file) {
+    const SevenZipWasm = await loadSevenZipScript();
+    if (!szInst) szInst = await SevenZipWasm({ print: () => {}, printErr: () => {} });
+    const fs = szInst.FS;
+    const buf = new Uint8Array(await file.arrayBuffer());
+    try { fs.unlink('in_archive'); } catch (e) {}
+    fs.writeFile('in_archive', buf);
+    let code;
+    try { code = szInst.callMain(['x', 'in_archive', '-y', '-o.']); }
+    catch (e) { code = -1; }
+    try { fs.unlink('in_archive'); } catch (e) {}
+    const entries = [];
+    walkFs(fs, '/', entries);
+    if (!entries.length) {
+      archiveEntries = [];
+      decompressList.innerHTML = '';
+      unzipAllBtn.disabled = true;
+      showToast('解压失败：文件可能损坏或已加密');
+      return;
+    }
+    archiveEntries = entries;
+    renderDecompressList();
+  }
+
   async function handleArchive(file) {
     const name = (file.name || '').toLowerCase();
+    if (name.endsWith('.7z') || name.endsWith('.rar')) { await handle7zRar(file); return; }
     const buf = new Uint8Array(await file.arrayBuffer());
     let entries = [];
     try {
@@ -1308,7 +1360,7 @@
       } else if (name.endsWith('.gz')) {
         entries = [{ name: (file.name.replace(/\.gz$/i, '') || '解压文件'), bytes: fflate.gunzipSync(buf) }];
       } else {
-        showToast('支持格式：ZIP / TAR / TAR.GZ / GZ');
+        showToast('支持格式：ZIP / TAR / TAR.GZ / GZ / 7Z / RAR');
         return;
       }
     } catch (err) {
