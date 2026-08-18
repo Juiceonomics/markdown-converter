@@ -610,6 +610,20 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="confirm-modal" hidden>
+  <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-head">
+      <div class="modal-title" id="confirm-title">确认</div>
+      <button class="modal-close" id="confirm-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body" id="confirm-msg"></div>
+    <div class="modal-foot">
+      <button id="confirm-ok" class="primary">确定</button>
+      <button id="confirm-cancel">取消</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="annot-modal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="annot-title">
     <div class="modal-head">
@@ -633,8 +647,7 @@
 <script src="turndown-plugin-gfm.js"></script>
 <script src="highlight.min.js"></script>
 <script src="fflate.min.js"></script>
-<script src="jspdf.umd.min.js"></script>
-<script src="pdf-lib.min.js"></script>
+<script src="purify.min.js"></script>
 <script defer src="katex/katex.min.js"></script>
 <script>
   const editor = document.getElementById('editor');
@@ -647,6 +660,20 @@
 
   let mode = 'wysiwyg';
   let view = 'editor'; // 'editor' | 'zip'
+
+  // 通用懒加载脚本（用到才加载，避免首屏体积过大）
+  const scriptPromises = {};
+  function loadScript(src) {
+    if (scriptPromises[src]) return scriptPromises[src];
+    scriptPromises[src] = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => { scriptPromises[src] = null; reject(new Error('加载 ' + src + ' 失败')); };
+      document.head.appendChild(s);
+    });
+    return scriptPromises[src];
+  }
 
   marked.setOptions({ gfm: true, breaks: true });
 
@@ -729,7 +756,8 @@
   }
   function mdToHtml(src) {
     const tmp = document.createElement('div');
-    tmp.innerHTML = marked.parse(src);
+    // DOMPurify 消毒：允许 style（字号/颜色/高亮）、data-*、class
+    tmp.innerHTML = DOMPurify.sanitize(marked.parse(src), { ADD_ATTR: ['style'] });
     if (window.hljs) tmp.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
     renderMath(tmp);
     return tmp.innerHTML;
@@ -1125,9 +1153,9 @@
     renderHistory();
     showToast('已保存到历史');
   });
-  document.getElementById('history-clear').addEventListener('click', () => {
+  document.getElementById('history-clear').addEventListener('click', async () => {
     if (!getHistory().length) return;
-    if (confirm('确定清空全部历史记录？')) {
+    if (await confirmDialog('确定清空全部历史记录？')) {
       setHistory([]);
       renderHistory();
       showToast('已清空');
@@ -1143,6 +1171,26 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
   }
+
+  // 自定义确认弹窗（替换原生 confirm）
+  const confirmModal = document.getElementById('confirm-modal');
+  const confirmMsg = document.getElementById('confirm-msg');
+  function confirmDialog(msg) {
+    return new Promise(resolve => {
+      let done = false;
+      const close = (val) => { if (done) return; done = true; confirmModal.hidden = true; resolve(val); };
+      confirmMsg.textContent = msg;
+      document.getElementById('confirm-ok').onclick = () => close(true);
+      document.getElementById('confirm-cancel').onclick = () => close(false);
+      document.getElementById('confirm-close').onclick = () => close(false);
+      confirmModal.hidden = false;
+      document.getElementById('confirm-ok').focus();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (confirmModal.hidden) return;
+    if (e.key === 'Escape') confirmModal.hidden = true;
+  });
 
   // ===== 视图切换（编辑器 / 压缩工具 / 图片工具 / PDF 工具）=====
   const editorActions = document.getElementById('editor-actions');
@@ -1523,8 +1571,9 @@
     if (rm) { imgpdfItems = imgpdfItems.filter(x => x.id !== rm.dataset.rm); renderImgpdfList(); }
   });
 
-  imgpdfDownloadBtn.addEventListener('click', () => {
+  imgpdfDownloadBtn.addEventListener('click', async () => {
     if (!imgpdfItems.length) return;
+    await loadScript('jspdf.umd.min.js');
     const doc = new jspdf.jsPDF({ unit: 'mm', format: 'a4' });
     const pageW = 210, pageH = 297, margin = 12;
     const maxW = pageW - margin * 2, maxH = pageH - margin * 2;
@@ -1636,6 +1685,7 @@
 
   async function handlePdfSplitFile(file) {
     if (!/\.pdf$/i.test(file.name)) { showToast('请选择 .pdf 文件'); return; }
+    await loadScript('pdf-lib.min.js');
     const bytes = new Uint8Array(await file.arrayBuffer());
     let doc;
     try { doc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true }); }
@@ -1689,6 +1739,7 @@
 
   pdfMergeDownload.addEventListener('click', async () => {
     if (pdfMergeItems.length < 2) return;
+    await loadScript('pdf-lib.min.js');
     const merged = await PDFLib.PDFDocument.create();
     for (const it of pdfMergeItems) {
       const bytes = new Uint8Array(await it.file.arrayBuffer());
@@ -1997,7 +2048,7 @@
   }
 
   document.getElementById('btn-word').addEventListener('click', () => {
-    if (contentEmpty()) { alert('内容为空，请先输入或编辑'); return; }
+    if (contentEmpty()) { showToast('内容为空，请先输入或编辑'); return; }
     saveToHistory();
     const bodyHtml = getWordBodyHtml();
     const title = deriveBaseName();
@@ -2041,7 +2092,7 @@ ${bodyHtml}
   }
 
   document.getElementById('btn-pdf').addEventListener('click', () => {
-    if (contentEmpty()) { alert('内容为空，请先输入或编辑'); return; }
+    if (contentEmpty()) { showToast('内容为空，请先输入或编辑'); return; }
     saveToHistory();
     if (mode === 'source') setMode('wysiwyg');
     const prevTitle = document.title;
@@ -2056,12 +2107,12 @@ ${bodyHtml}
   }
   document.getElementById('btn-md').addEventListener('click', () => {
     const md = getCurrentMarkdown();
-    if (!md.trim()) { alert('内容为空，请先输入或编辑'); return; }
+    if (!md.trim()) { showToast('内容为空，请先输入或编辑'); return; }
     downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), deriveBaseName() + '.md');
     showToast('已导出 Markdown');
   });
   document.getElementById('btn-html').addEventListener('click', () => {
-    if (contentEmpty()) { alert('内容为空，请先输入或编辑'); return; }
+    if (contentEmpty()) { showToast('内容为空，请先输入或编辑'); return; }
     const full = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n<title>' + escapeHtml(deriveTitle()) + '</title>\n</head>\n<body>\n' + getExportHtml() + '\n</body>\n</html>';
     downloadBlob(new Blob([full], { type: 'text/html;charset=utf-8' }), deriveBaseName() + '.html');
     showToast('已导出 HTML');

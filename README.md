@@ -46,8 +46,9 @@
 | `katex/` | KaTeX 数学公式渲染（JS + CSS + 字体，完整本地化） |
 | `fflate.min.js` | ZIP / GZ / TAR 压缩 / 解压 |
 | `sevenzip-wasm.js` / `.wasm` | 7z / RAR 解压（懒加载） |
-| `jspdf.umd.min.js` | 图片转 PDF |
-| `pdf-lib.min.js` | PDF 合并 / 拆分 |
+| `jspdf.umd.min.js` | 图片转 PDF（懒加载） |
+| `pdf-lib.min.js` | PDF 合并 / 拆分（懒加载） |
+| `purify.min.js` | Markdown 渲染 XSS 消毒（DOMPurify） |
 
 ## 说明
 
@@ -58,4 +59,5 @@
 - PDF 合并 / 拆分不支持加密 PDF
 - 历史记录存在浏览器 localStorage，不跨设备同步
 - 老式 `.doc` 的文字提取是「提取可读文字」，质量有限；建议用 Word 另存为 `.docx` 后提取更完整
+- 大库（jsPDF / pdf-lib / 7-Zip WASM）按需懒加载，首屏更快
 - 界面衬线字体走 Google Fonts，加载失败时自动降级为系统字体（宋体 / 微软雅黑）
