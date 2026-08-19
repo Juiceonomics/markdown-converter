@@ -394,6 +394,16 @@
   .word-review-btns button { min-width: 100px; padding: 9px 14px; }
   .word-review-progress { color: var(--muted); font-size: 12.5px; margin-top: 14px; }
 
+  /* 思维导图 */
+  .map-tool { flex: 1; min-height: 0; background: var(--paper); padding: 24px 20px 80px; display: flex; flex-direction: column; gap: 12px; }
+  .map-tool[hidden] { display: none !important; }
+  .map-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; max-width: 1100px; margin: 0 auto; }
+  .map-hint { font-size: 12.5px; color: var(--muted); }
+  .map-panel { position: relative; flex: 1; min-height: 0; width: 100%; max-width: 1100px; margin: 0 auto; background: var(--sheet); border-radius: 14px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 14px 36px rgba(27,26,23,.08); overflow: hidden; }
+  .map-panel svg { width: 100%; height: 100%; display: block; }
+  .map-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
+  .map-empty[hidden] { display: none; }
+
   @media (max-width: 1000px) {
     .annot-sidebar { width: 240px; }
     .nav-pane { width: 180px; }
@@ -468,6 +478,7 @@
     <button class="view-tab" id="tab-repair" role="tab" aria-selected="false" data-view="repair">文档修复</button>
     <button class="view-tab" id="tab-library" role="tab" aria-selected="false" data-view="library">知识库</button>
     <button class="view-tab" id="tab-wordbook" role="tab" aria-selected="false" data-view="wordbook">单词库</button>
+    <button class="view-tab" id="tab-map" role="tab" aria-selected="false" data-view="map">思维导图</button>
   </nav>
 </div>
 
@@ -696,6 +707,17 @@
       </div>
       <div class="lib-list" id="word-list"></div>
     </div>
+  </div>
+</section>
+
+<section class="map-tool" id="map-tool" hidden>
+  <div class="map-topbar">
+    <span class="map-hint">导图由当前文档的标题层级自动生成；在编辑器里修改后，切回本页或点「重新生成」即可更新。</span>
+    <button id="map-refresh" class="outline">重新生成</button>
+  </div>
+  <div class="map-panel" id="map-panel">
+    <svg id="map-svg"></svg>
+    <div class="map-empty" id="map-empty">先在编辑器里打开或粘贴内容，标题将自动生成思维导图</div>
   </div>
 </section>
 
@@ -1612,18 +1634,22 @@
         '</div>' +
         '<div class="acts">' +
           '<button data-open="' + d.id + '">打开</button>' +
+          '<button data-map="' + d.id + '">导图</button>' +
           '<button class="hist-del" data-del="' + d.id + '">删除</button>' +
         '</div>' +
       '</div>'
     ).join('');
   }
-  function openLibraryDoc(doc) {
+  function loadLibraryDocToEditor(doc) {
     editor.innerHTML = doc.html;
     currentFileBase = (doc.title || '').replace(/[\\/:*?"<>|]/g, '') || null;
     if (mode === 'source') setMode('wysiwyg');
     updateStatus();
     renderAllAnnots();
     saveDraft();
+  }
+  function openLibraryDoc(doc) {
+    loadLibraryDocToEditor(doc);
     setView('editor');
     showToast('已打开：' + (doc.title || '未命名'));
   }
@@ -1638,12 +1664,18 @@
 
   libList.addEventListener('click', async (e) => {
     const openBtn = e.target.closest('[data-open]');
+    const mapBtn = e.target.closest('[data-map]');
     const delBtn = e.target.closest('[data-del]');
-    const id = openBtn ? openBtn.dataset.open : delBtn.dataset.del;
+    const src = openBtn || mapBtn || delBtn;
+    const id = src && (src.dataset.open || src.dataset.map || src.dataset.del);
     const doc = libDocs.find(x => x.id === id);
     if (!doc) return;
     if (openBtn) openLibraryDoc(doc);
-    else if (delBtn) {
+    else if (mapBtn) {
+      loadLibraryDocToEditor(doc);
+      setView('map');
+      showToast('已生成思维导图');
+    } else if (delBtn) {
       if (await confirmDialog('确定从知识库删除「' + (doc.title || '未命名') + '」？')) {
         setLibrary(getLibrary().filter(x => x.id !== doc.id));
         renderLibrary();
@@ -2088,6 +2120,48 @@
   });
   document.addEventListener('keydown', (e) => { if (!pasteModal.hidden && e.key === 'Escape') pasteModal.hidden = true; });
 
+  // ===== 思维导图（markmap，从当前文档标题自动生成）=====
+  let mapAssetsPromise = null;
+  function loadMapAssets() {
+    if (mapAssetsPromise) return mapAssetsPromise;
+    mapAssetsPromise = Promise.all([
+      loadScript('d3.min.js'),
+      loadScript('markmap-lib.min.js'),
+      loadScript('markmap-view.min.js')
+    ]);
+    return mapAssetsPromise;
+  }
+  let mmInstance = null;
+  let mapSeq = 0;
+  async function renderMap() {
+    const seq = ++mapSeq;
+    await loadMapAssets();
+    if (seq !== mapSeq) return;
+    const md = getCurrentMarkdown() || '';
+    const empty = document.getElementById('map-empty');
+    empty.hidden = md.trim().length > 0;
+    if (!md.trim()) return;
+    let root;
+    try {
+      root = new window.markmap.Transformer().transform(md).root;
+    } catch (e) {
+      empty.hidden = false;
+      empty.textContent = '导图生成失败：' + e.message;
+      return;
+    }
+    const svg = document.getElementById('map-svg');
+    requestAnimationFrame(() => {
+      if (seq !== mapSeq) return;
+      if (!mmInstance) {
+        mmInstance = window.markmap.Markmap.create(svg, { autoFit: true, duration: 300, initialExpandLevel: 3 }, root);
+      } else {
+        mmInstance.setData(root);
+        mmInstance.fit();
+      }
+    });
+  }
+  document.getElementById('map-refresh').addEventListener('click', () => { renderMap(); showToast('已重新生成'); });
+
   // toast 提示
   const toast = document.getElementById('toast');
   let toastTimer;
@@ -2127,6 +2201,7 @@
   const repairTool = document.getElementById('repair-tool');
   const libraryTool = document.getElementById('library-tool');
   const wordbookTool = document.getElementById('wordbook-tool');
+  const mapTool = document.getElementById('map-tool');
 
   function setView(v) {
     view = v;
@@ -2144,13 +2219,15 @@
     repairTool.hidden = (v !== 'repair');
     libraryTool.hidden = (v !== 'library');
     wordbookTool.hidden = (v !== 'wordbook');
+    mapTool.hidden = (v !== 'map');
     if (isEditor) updateStatus();
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
     else if (v === 'pdf') status.textContent = 'PDF 工具 · 合并 / 拆分';
     else if (v === 'repair') status.textContent = '文档修复 · 乱码 / 文字提取';
     else if (v === 'library') { renderLibrary(); status.textContent = '知识库 · 分类 / 长期保存'; }
-    else { renderWords(); status.textContent = '单词库 · 划词积累 / 复习'; }
+    else if (v === 'wordbook') { renderWords(); status.textContent = '单词库 · 划词积累 / 复习'; }
+    else { renderMap(); status.textContent = '思维导图 · 由当前文档自动生成'; }
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
