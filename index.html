@@ -441,6 +441,7 @@
   <div class="spacer"></div>
   <div class="actions" id="editor-actions">
     <button id="btn-load" data-tip="载入文件" data-tip-desc="打开本地 .md 或 .txt 文件">载入文件</button>
+    <button id="btn-paste" data-tip="载入文本" data-tip-desc="粘贴 Markdown 文本，直接替换当前内容">载入文本</button>
     <button id="btn-sample" data-tip="示例" data-tip-desc="填入一份示例文档，方便快速体验">示例</button>
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
     <button id="btn-versions" data-tip="版本快照" data-tip-desc="自动保存的版本快照，可恢复到任意历史版本">版本</button>
@@ -741,6 +742,23 @@
 </div>
 
 <div class="tooltip" id="tooltip"><div class="tt-title"></div><div class="tt-desc"></div></div>
+
+<div class="modal-backdrop" id="paste-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="paste-title">
+    <div class="modal-head">
+      <div class="modal-title" id="paste-title">载入 Markdown 文本</div>
+      <button class="modal-close" id="paste-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <textarea class="repair-input" id="paste-input" placeholder="在这里粘贴 Markdown 文本…" style="min-height:220px"></textarea>
+      <div style="font-size:12px;color:var(--muted);">点「载入」会用这段文本替换当前编辑器内容（当前内容仍保留在草稿 / 版本快照里）。</div>
+    </div>
+    <div class="modal-foot">
+      <button id="paste-confirm" class="primary">载入</button>
+      <button id="paste-cancel">取消</button>
+    </div>
+  </div>
+</div>
 
 <div class="sel-bar" id="sel-bar" hidden>
   <div class="sel-bar-head">
@@ -2043,6 +2061,32 @@
     setTimeout(() => { h.style.outline = prev; h.style.outlineOffset = ''; }, 1200);
   });
   refreshNav();
+
+  // ===== 载入 Markdown 文本 =====
+  const pasteModal = document.getElementById('paste-modal');
+  const pasteInput = document.getElementById('paste-input');
+  document.getElementById('btn-paste').addEventListener('click', () => {
+    pasteInput.value = '';
+    pasteModal.hidden = false;
+    pasteInput.focus();
+  });
+  document.getElementById('paste-close').addEventListener('click', () => { pasteModal.hidden = true; });
+  document.getElementById('paste-cancel').addEventListener('click', () => { pasteModal.hidden = true; });
+  pasteModal.addEventListener('mousedown', (e) => { if (e.target === pasteModal) pasteModal.hidden = true; });
+  document.getElementById('paste-confirm').addEventListener('click', async () => {
+    const text = pasteInput.value.trim();
+    if (!text) { showToast('请输入 Markdown 内容'); return; }
+    if (!contentEmpty() && !(await confirmDialog('将替换当前内容，确定载入？'))) return;
+    if (mode === 'source') setMode('wysiwyg');
+    currentFileBase = null; // 是文本不是文件，导出默认名退回文档标题
+    editor.innerHTML = mdToHtml(text);
+    updateStatus();
+    renderAllAnnots();
+    saveDraft();
+    pasteModal.hidden = true;
+    showToast('已载入 Markdown 文本');
+  });
+  document.addEventListener('keydown', (e) => { if (!pasteModal.hidden && e.key === 'Escape') pasteModal.hidden = true; });
 
   // toast 提示
   const toast = document.getElementById('toast');
