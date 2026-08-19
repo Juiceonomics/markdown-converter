@@ -329,6 +329,7 @@
 
   /* 知识库 */
   .lib-tool { flex: 1; min-height: 0; background: var(--paper); padding: 32px 20px 80px; display: flex; }
+  .lib-tool[hidden] { display: none !important; }
   .lib-layout { flex: 1; min-width: 0; display: flex; gap: 20px; max-width: 1000px; margin: 0 auto; }
   .lib-cats { width: 180px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
   .lib-cat { text-align: left; font-size: 13.5px; padding: 8px 12px; border-radius: 8px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease); }
@@ -1277,13 +1278,15 @@
     try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
     const data = {
       app: 'folio',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       history: getHistory(),
-      draft: draft
+      draft: draft,
+      library: getLibrary(),
+      categories: getCats()
     };
     downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'folio备份.json');
-    showToast('已导出备份（历史 ' + data.history.length + ' 条）');
+    showToast('已导出备份（历史 ' + data.history.length + ' 条 · 知识库 ' + data.library.length + ' 篇）');
   });
 
   document.getElementById('history-import').addEventListener('click', () => {
@@ -1300,14 +1303,17 @@
       catch (err) { showToast('备份文件无效'); return; }
       if (!data || data.app !== 'folio') { showToast('不是 Folio 的备份文件'); return; }
       if (Array.isArray(data.history)) setHistory(data.history);
+      if (Array.isArray(data.library)) setLibrary(data.library);
+      if (Array.isArray(data.categories)) setCats(data.categories);
       if (data.draft && data.draft.html) localStorage.setItem(DRAFT_KEY, JSON.stringify(data.draft));
       renderHistory();
+      renderLibrary();
       if (data.draft && data.draft.html && contentEmpty()) {
         editor.innerHTML = data.draft.html;
         updateStatus();
         renderAllAnnots();
       }
-      showToast('已导入备份（历史 ' + (data.history ? data.history.length : 0) + ' 条）');
+      showToast('已导入备份（历史 ' + (data.history ? data.history.length : 0) + ' 条 · 知识库 ' + (data.library ? data.library.length : 0) + ' 篇）');
     };
     reader.readAsText(f, 'utf-8');
   });
