@@ -1765,7 +1765,9 @@
   // ===== 划词 / 划句翻译浮窗 =====
   const selBar = document.getElementById('sel-bar');
   let selText = '';
-  function hideSelBar() { selBar.hidden = true; document.getElementById('sel-result').hidden = true; selText = ''; }
+  let selTransOk = false; // 翻译是否成功（防止把错误信息存进单词库）
+  let selSeq = 0;
+  function hideSelBar() { selBar.hidden = true; document.getElementById('sel-result').hidden = true; selText = ''; selTransOk = false; }
   function positionSelBar(range) {
     const r = range.getBoundingClientRect();
     let top = r.bottom + 8, left = r.left;
@@ -1777,6 +1779,8 @@
   function showSelBar(range, text) {
     selText = text.trim();
     if (!selText) return;
+    selSeq++;
+    selTransOk = false;
     document.getElementById('sel-word').textContent = selText.length > 60 ? selText.slice(0, 60) + '…' : selText;
     document.getElementById('sel-result').hidden = true;
     selBar.hidden = false;
@@ -1792,19 +1796,25 @@
   document.addEventListener('mousedown', (e) => {
     if (!selBar.hidden && !selBar.contains(e.target)) hideSelBar();
   });
+  document.addEventListener('scroll', hideSelBar, true);
   document.getElementById('sel-close').addEventListener('click', hideSelBar);
 
   document.getElementById('sel-translate').addEventListener('click', async () => {
     if (!selText) return;
+    const seq = ++selSeq;
     const res = document.getElementById('sel-result');
     const textEl = document.getElementById('sel-result-text');
     res.hidden = false;
     textEl.textContent = '翻译中…';
-    try { textEl.textContent = await translateText(selText); }
-    catch (e) { textEl.textContent = e.message; }
+    try {
+      const out = await translateText(selText);
+      if (seq === selSeq) { textEl.textContent = out; selTransOk = true; }
+    } catch (e) {
+      if (seq === selSeq) { textEl.textContent = e.message; selTransOk = false; }
+    }
   });
   document.getElementById('sel-copy').addEventListener('click', () => {
-    copyToClipboard(document.getElementById('sel-result-text').textContent);
+    if (selTransOk) copyToClipboard(document.getElementById('sel-result-text').textContent);
   });
 
   function extractContext(sel) {
@@ -1819,7 +1829,7 @@
   }
   function saveSelectionToWordbook() {
     if (!selText) return;
-    const trans = document.getElementById('sel-result').hidden ? '' : document.getElementById('sel-result-text').textContent;
+    const trans = selTransOk ? document.getElementById('sel-result-text').textContent : '';
     saveWord({ word: selText.slice(0, 120), trans: trans, context: extractContext(selText) });
     hideSelBar();
     showToast('已存入单词库');
@@ -1833,8 +1843,18 @@
   function setWords(list) { localStorage.setItem(WORDS_KEY, JSON.stringify(list)); }
   function saveWord(entry) {
     const words = getWords();
-    words.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), word: entry.word, trans: entry.trans || '', context: entry.context || '', addedAt: Date.now(), known: false, reviewCount: 0 });
-    setWords(words.slice(0, 3000));
+    const key = entry.word.trim().toLowerCase();
+    const existing = words.find(w => w.word.trim().toLowerCase() === key);
+    if (existing) {
+      // 同词去重：更新内容、保留「已认识/复习次数」、移到顶部
+      existing.trans = entry.trans || existing.trans;
+      existing.context = entry.context || existing.context;
+      existing.addedAt = Date.now();
+      setWords([existing].concat(words.filter(w => w !== existing)).slice(0, 3000));
+    } else {
+      words.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), word: entry.word, trans: entry.trans || '', context: entry.context || '', addedAt: Date.now(), known: false, reviewCount: 0 });
+      setWords(words.slice(0, 3000));
+    }
     renderWords();
   }
 
