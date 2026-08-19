@@ -327,6 +327,36 @@
   .annot-item .acts { display: flex; gap: 6px; flex: 0 0 auto; }
   .annot-item .acts button { font-size: 12px; padding: 4px 10px; }
 
+  /* 知识库 */
+  .lib-tool { flex: 1; min-height: 0; background: var(--paper); padding: 32px 20px 80px; display: flex; }
+  .lib-layout { flex: 1; min-width: 0; display: flex; gap: 20px; max-width: 1000px; margin: 0 auto; }
+  .lib-cats { width: 180px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
+  .lib-cat { text-align: left; font-size: 13.5px; padding: 8px 12px; border-radius: 8px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease); }
+  .lib-cat:hover { background: #F3F0E9; color: var(--ink); }
+  .lib-cat.active { background: var(--ink); color: #fff; }
+  .lib-cat-count { font-size: 11px; opacity: .6; margin-left: 4px; }
+  .lib-cat-manage { margin-top: 6px; font-size: 12.5px; color: var(--ink-2); background: transparent; border: none; cursor: pointer; text-align: left; padding: 8px 12px; border-radius: 8px; }
+  .lib-cat-manage:hover { background: #F3F0E9; color: var(--ink); }
+  .lib-main { flex: 1; min-width: 0; background: var(--sheet); border-radius: 14px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 14px 36px rgba(27,26,23,.08); display: flex; flex-direction: column; min-height: 0; }
+  .lib-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+  .lib-toolbar input { flex: 1; font-family: var(--font-ui); font-size: 13px; padding: 7px 12px; border: 1px solid var(--hairline-strong); border-radius: 8px; }
+  .lib-count { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
+  .lib-list { flex: 1; overflow-y: auto; padding: 6px 14px; }
+  .lib-doc { display: flex; align-items: center; gap: 12px; padding: 12px 6px; border-bottom: 1px solid var(--hairline); }
+  .lib-doc:last-child { border-bottom: none; }
+  .lib-doc .main { flex: 1; min-width: 0; }
+  .lib-doc .title { font-weight: 600; font-size: 14px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lib-doc .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .lib-doc .snippet { font-size: 12.5px; color: var(--ink-2); margin-top: 4px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .lib-doc .acts { display: flex; gap: 6px; flex: 0 0 auto; }
+  .lib-doc .acts button { font-size: 12px; padding: 6px 12px; }
+  .lib-field-label { display: block; font-size: 12.5px; color: var(--ink-2); margin: 8px 0 4px; }
+  .lib-text-input { width: 100%; font-family: var(--font-ui); font-size: 13px; padding: 8px 12px; border: 1px solid var(--hairline-strong); border-radius: 8px; box-sizing: border-box; }
+  .cat-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid var(--hairline); }
+  .cat-row:last-child { border-bottom: none; }
+  .cat-row input { flex: 1; font-family: var(--font-ui); font-size: 13px; padding: 6px 10px; border: 1px solid var(--hairline-strong); border-radius: 6px; }
+  .cat-row .count { font-size: 12px; color: var(--muted); }
+
   @media (max-width: 1000px) {
     .annot-sidebar { width: 240px; }
   }
@@ -339,6 +369,9 @@
     .annot-sidebar { display: none; }
     .zip-tool { padding: 16px 10px 60px; }
     .zip-grid { grid-template-columns: 1fr; }
+    .lib-tool { padding: 16px 10px 60px; }
+    .lib-layout { flex-direction: column; }
+    .lib-cats { width: 100%; flex-direction: row; flex-wrap: wrap; }
   }
 
   @media print {
@@ -372,6 +405,7 @@
     <button id="btn-sample" data-tip="示例" data-tip-desc="填入一份示例文档，方便快速体验">示例</button>
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
     <button id="btn-versions" data-tip="版本快照" data-tip-desc="自动保存的版本快照，可恢复到任意历史版本">版本</button>
+    <button id="btn-lib-save" data-tip="存入知识库" data-tip-desc="把当前文档存入知识库，长期保存并分类">存入知识库</button>
     <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
     <span class="sep"></span>
@@ -390,6 +424,7 @@
     <button class="view-tab" id="tab-imgpdf" role="tab" aria-selected="false" data-view="imgpdf">图片工具</button>
     <button class="view-tab" id="tab-pdf" role="tab" aria-selected="false" data-view="pdf">PDF 工具</button>
     <button class="view-tab" id="tab-repair" role="tab" aria-selected="false" data-view="repair">文档修复</button>
+    <button class="view-tab" id="tab-library" role="tab" aria-selected="false" data-view="library">知识库</button>
   </nav>
 </div>
 
@@ -580,10 +615,65 @@
   <input type="file" id="docx-file-input" accept=".docx,.doc" hidden>
 </section>
 
+<section class="lib-tool" id="library-tool" hidden>
+  <div class="lib-layout">
+    <aside class="lib-cats" aria-label="知识库分类">
+      <button class="lib-cat active" data-cat="__all__">全部</button>
+      <button class="lib-cat" data-cat="__none__">未分类</button>
+      <div id="lib-cat-list"></div>
+      <button class="lib-cat-manage" id="lib-cat-manage">⚙ 管理分类</button>
+    </aside>
+    <div class="lib-main">
+      <div class="lib-toolbar">
+        <input type="search" id="lib-search" placeholder="搜索标题 / 内容…" aria-label="搜索知识库">
+        <span class="lib-count" id="lib-count"></span>
+      </div>
+      <div class="lib-list" id="lib-list"></div>
+    </div>
+  </div>
+</section>
+
 <footer class="statusbar">
   <span id="status">0 字符 · 0 词 · 富文本</span>
   <span class="hint">字号 / 颜色 / 高亮会保留在导出文件中；切换「Markdown 源码」时以内联 HTML 保留</span>
 </footer>
+
+<div class="modal-backdrop" id="lib-save-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="lib-save-title">
+    <div class="modal-head">
+      <div class="modal-title" id="lib-save-title">存入知识库</div>
+      <button class="modal-close" id="lib-save-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="lib-field-label">标题</label>
+      <input type="text" class="lib-text-input" id="lib-save-title-input" placeholder="文档标题">
+      <label class="lib-field-label">分类</label>
+      <select class="lib-text-input" id="lib-save-cat"></select>
+      <div id="lib-save-newcat-wrap" hidden>
+        <label class="lib-field-label">新分类名称</label>
+        <input type="text" class="lib-text-input" id="lib-save-newcat" placeholder="输入新分类名">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button id="lib-save-confirm" class="primary">保存</button>
+      <button id="lib-save-cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="lib-cat-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="lib-cat-title">
+    <div class="modal-head">
+      <div class="modal-title" id="lib-cat-title">管理分类</div>
+      <button class="modal-close" id="lib-cat-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body" id="lib-cat-list-manage"></div>
+    <div class="modal-foot">
+      <input type="text" id="lib-cat-new" class="lib-text-input" placeholder="新分类名称" style="flex:1">
+      <button id="lib-cat-add-confirm">添加</button>
+    </div>
+  </div>
+</div>
 
 <div class="tooltip" id="tooltip"><div class="tt-title"></div><div class="tt-desc"></div></div>
 
@@ -1311,6 +1401,210 @@
     }
   });
 
+  // ===== 知识库（长期保存 + 分类）=====
+  const LIBRARY_KEY = 'folio.library';
+  const CATS_KEY = 'folio.cats';
+  const CAT_ALL = '__all__', CAT_NONE = '__none__';
+  let libFilter = CAT_ALL, libQuery = '', libDocs = [];
+
+  function getLibrary() { try { return JSON.parse(localStorage.getItem(LIBRARY_KEY) || '[]'); } catch (e) { return []; } }
+  function setLibrary(list) { localStorage.setItem(LIBRARY_KEY, JSON.stringify(list)); }
+  function getCats() { try { return JSON.parse(localStorage.getItem(CATS_KEY) || '[]'); } catch (e) { return []; } }
+  function setCats(list) { localStorage.setItem(CATS_KEY, JSON.stringify(list)); }
+
+  const libList = document.getElementById('lib-list');
+  const libCount = document.getElementById('lib-count');
+  const libSearch = document.getElementById('lib-search');
+  const libCatList = document.getElementById('lib-cat-list');
+  const libSaveModal = document.getElementById('lib-save-modal');
+  const libCatModal = document.getElementById('lib-cat-modal');
+
+  function renderLibCats() {
+    const cats = getCats();
+    const docs = getLibrary();
+    libCatList.innerHTML = cats.map(c => {
+      const cnt = docs.filter(d => d.category === c).length;
+      return '<button class="lib-cat' + (libFilter === c ? ' active' : '') + '" data-cat="' + escapeHtml(c) + '">' + escapeHtml(c) + ' <span class="lib-cat-count">' + cnt + '</span></button>';
+    }).join('');
+  }
+  function renderLibrary() {
+    renderLibCats();
+    const docs = getLibrary().filter(d => {
+      if (libFilter !== CAT_ALL) {
+        if (libFilter === CAT_NONE) { if (d.category) return false; }
+        else if (d.category !== libFilter) return false;
+      }
+      if (libQuery) {
+        const hay = (d.title + ' ' + (d.text || '')).toLowerCase();
+        if (!hay.includes(libQuery.toLowerCase())) return false;
+      }
+      return true;
+    });
+    libDocs = docs;
+    libCount.textContent = docs.length + ' 条';
+    if (!docs.length) {
+      libList.innerHTML = '<div class="hist-empty">' + (getLibrary().length ? '没有匹配的文档' : '还没有知识库内容。在编辑器里编辑后点「存入知识库」，重要文档就能长期保存、分类、搜索。') + '</div>';
+      return;
+    }
+    libList.innerHTML = docs.map(d =>
+      '<div class="lib-doc">' +
+        '<div class="main">' +
+          '<div class="title">' + escapeHtml(d.title || '未命名') + '</div>' +
+          '<div class="meta">' + escapeHtml(d.category || '未分类') + ' · ' + new Date(d.updatedAt || d.savedAt).toLocaleString('zh-CN', { hour12: false }) + '</div>' +
+          '<div class="snippet">' + escapeHtml(d.text || '') + '</div>' +
+        '</div>' +
+        '<div class="acts">' +
+          '<button data-open="' + d.id + '">打开</button>' +
+          '<button class="hist-del" data-del="' + d.id + '">删除</button>' +
+        '</div>' +
+      '</div>'
+    ).join('');
+  }
+  function openLibraryDoc(doc) {
+    editor.innerHTML = doc.html;
+    currentFileBase = (doc.title || '').replace(/[\\/:*?"<>|]/g, '') || null;
+    if (mode === 'source') setMode('wysiwyg');
+    updateStatus();
+    renderAllAnnots();
+    saveDraft();
+    setView('editor');
+    showToast('已打开：' + (doc.title || '未命名'));
+  }
+
+  document.querySelector('.lib-cats').addEventListener('click', (e) => {
+    const btn = e.target.closest('.lib-cat');
+    if (!btn) return;
+    libFilter = btn.dataset.cat;
+    renderLibrary();
+  });
+  libSearch.addEventListener('input', () => { libQuery = libSearch.value.trim(); renderLibrary(); });
+
+  libList.addEventListener('click', async (e) => {
+    const openBtn = e.target.closest('[data-open]');
+    const delBtn = e.target.closest('[data-del]');
+    const id = openBtn ? openBtn.dataset.open : delBtn.dataset.del;
+    const doc = libDocs.find(x => x.id === id);
+    if (!doc) return;
+    if (openBtn) openLibraryDoc(doc);
+    else if (delBtn) {
+      if (await confirmDialog('确定从知识库删除「' + (doc.title || '未命名') + '」？')) {
+        setLibrary(getLibrary().filter(x => x.id !== doc.id));
+        renderLibrary();
+        showToast('已删除');
+      }
+    }
+  });
+
+  // 存入知识库
+  function openLibSaveModal() {
+    document.getElementById('lib-save-title-input').value = deriveTitle();
+    const cats = getCats();
+    document.getElementById('lib-save-cat').innerHTML = '<option value="">未分类</option>' + cats.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('') + '<option value="__new__">＋ 新建分类…</option>';
+    document.getElementById('lib-save-newcat-wrap').hidden = true;
+    libSaveModal.hidden = false;
+    document.getElementById('lib-save-title-input').focus();
+  }
+  document.getElementById('btn-lib-save').addEventListener('click', () => {
+    if (contentEmpty()) { showToast('当前没有内容可保存'); return; }
+    openLibSaveModal();
+  });
+  document.getElementById('lib-save-cat').addEventListener('change', (e) => {
+    document.getElementById('lib-save-newcat-wrap').hidden = e.target.value !== '__new__';
+  });
+  document.getElementById('lib-save-confirm').addEventListener('click', () => {
+    if (contentEmpty()) { showToast('当前没有内容可保存'); return; }
+    const title = document.getElementById('lib-save-title-input').value.trim() || '未命名';
+    let cat = document.getElementById('lib-save-cat').value;
+    if (cat === '__new__') {
+      const newName = document.getElementById('lib-save-newcat').value.trim();
+      if (!newName) { showToast('请输入新分类名称'); return; }
+      const cats = getCats();
+      if (!cats.includes(newName)) { cats.push(newName); setCats(cats); }
+      cat = newName;
+    }
+    const lib = getLibrary();
+    lib.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title, category: cat, html: getExportHtml(), text: (mode === 'source' ? source.value : editor.innerText).slice(0, 160), savedAt: Date.now(), updatedAt: Date.now() });
+    setLibrary(lib.slice(0, 200));
+    libSaveModal.hidden = true;
+    renderLibrary();
+    showToast('已存入知识库');
+  });
+  document.getElementById('lib-save-close').addEventListener('click', () => { libSaveModal.hidden = true; });
+  document.getElementById('lib-save-cancel').addEventListener('click', () => { libSaveModal.hidden = true; });
+  libSaveModal.addEventListener('mousedown', (e) => { if (e.target === libSaveModal) libSaveModal.hidden = true; });
+
+  // 管理分类
+  const libCatManageList = document.getElementById('lib-cat-list-manage');
+  function renderLibCatManage() {
+    const cats = getCats();
+    const docs = getLibrary();
+    libCatManageList.innerHTML = cats.map((c, i) => {
+      const cnt = docs.filter(d => d.category === c).length;
+      return '<div class="cat-row">' +
+        '<input type="text" value="' + escapeHtml(c) + '" data-cati="' + i + '" aria-label="分类名称">' +
+        '<span class="count">' + cnt + '</span>' +
+        '<button class="hist-del" data-catdel="' + i + '">删除</button>' +
+      '</div>';
+    }).join('') || '<div class="hist-empty">还没有分类</div>';
+  }
+  document.getElementById('lib-cat-manage').addEventListener('click', () => {
+    renderLibCatManage();
+    libCatModal.hidden = false;
+    document.getElementById('lib-cat-new').focus();
+  });
+  document.getElementById('lib-cat-close').addEventListener('click', () => { libCatModal.hidden = true; });
+  libCatModal.addEventListener('mousedown', (e) => { if (e.target === libCatModal) libCatModal.hidden = true; });
+
+  libCatManageList.addEventListener('change', (e) => {
+    const input = e.target.closest('input[data-cati]');
+    if (!input) return;
+    const cats = getCats();
+    const oldName = cats[Number(input.dataset.cati)];
+    const newName = input.value.trim();
+    if (!newName || newName === oldName) return;
+    if (cats.includes(newName)) { showToast('分类已存在'); renderLibCatManage(); return; }
+    cats[Number(input.dataset.cati)] = newName;
+    setCats(cats);
+    const docs = getLibrary();
+    docs.forEach(d => { if (d.category === oldName) d.category = newName; });
+    setLibrary(docs);
+    if (libFilter === oldName) libFilter = newName;
+    renderLibCatManage();
+    renderLibrary();
+    showToast('已重命名');
+  });
+  libCatManageList.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-catdel]');
+    if (!del) return;
+    const cats = getCats();
+    const name = cats[Number(del.dataset.catdel)];
+    const docs = getLibrary();
+    docs.forEach(d => { if (d.category === name) d.category = ''; });
+    setLibrary(docs);
+    setCats(cats.filter((_, i) => i !== Number(del.dataset.catdel)));
+    if (libFilter === name) libFilter = CAT_ALL;
+    renderLibCatManage();
+    renderLibrary();
+    showToast('已删除分类（文档移至未分类）');
+  });
+  document.getElementById('lib-cat-add-confirm').addEventListener('click', () => {
+    const input = document.getElementById('lib-cat-new');
+    const name = input.value.trim();
+    if (!name) return;
+    const cats = getCats();
+    if (cats.includes(name)) { showToast('分类已存在'); return; }
+    cats.push(name);
+    setCats(cats);
+    input.value = '';
+    renderLibCatManage();
+    renderLibrary();
+    showToast('已新建分类');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!libSaveModal.hidden && e.key === 'Escape') libSaveModal.hidden = true;
+    if (!libCatModal.hidden && e.key === 'Escape') libCatModal.hidden = true;
+  });
+
   // toast 提示
   const toast = document.getElementById('toast');
   let toastTimer;
@@ -1348,6 +1642,7 @@
   const imgpdfTool = document.getElementById('imgpdf-tool');
   const pdfTool = document.getElementById('pdf-tool');
   const repairTool = document.getElementById('repair-tool');
+  const libraryTool = document.getElementById('library-tool');
 
   function setView(v) {
     view = v;
@@ -1363,11 +1658,13 @@
     imgpdfTool.hidden = (v !== 'imgpdf');
     pdfTool.hidden = (v !== 'pdf');
     repairTool.hidden = (v !== 'repair');
+    libraryTool.hidden = (v !== 'library');
     if (isEditor) updateStatus();
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
     else if (v === 'pdf') status.textContent = 'PDF 工具 · 合并 / 拆分';
-    else status.textContent = '文档修复 · 乱码 / 文字提取';
+    else if (v === 'repair') status.textContent = '文档修复 · 乱码 / 文字提取';
+    else { renderLibrary(); status.textContent = '知识库 · 分类 / 长期保存'; }
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
