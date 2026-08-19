@@ -358,6 +358,30 @@
   .cat-row input { flex: 1; font-family: var(--font-ui); font-size: 13px; padding: 6px 10px; border: 1px solid var(--hairline-strong); border-radius: 6px; }
   .cat-row .count { font-size: 12px; color: var(--muted); }
 
+  /* 划词翻译浮窗 */
+  .sel-bar { position: fixed; z-index: 160; width: 320px; background: var(--sheet); border: 1px solid var(--hairline); border-radius: 12px; box-shadow: 0 14px 44px rgba(27,26,23,.2); padding: 12px; font-size: 13px; }
+  .sel-bar[hidden] { display: none; }
+  .sel-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .sel-word { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sel-close { font-size: 16px; line-height: 1; padding: 0 4px; border: none; background: transparent; color: var(--muted); cursor: pointer; }
+  .sel-close:hover { color: var(--ink); }
+  .sel-actions { display: flex; gap: 8px; }
+  .sel-actions button { font-size: 12.5px; padding: 6px 12px; }
+  .sel-result { margin-top: 10px; border-top: 1px solid var(--hairline); padding-top: 10px; }
+  .sel-result-text { color: var(--ink); line-height: 1.6; max-height: 160px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  .sel-result-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .sel-result-actions button { font-size: 12px; padding: 5px 10px; }
+  .sel-bar.loading .sel-result-text::after { content: '翻译中…'; color: var(--muted); }
+
+  /* 单词复习 */
+  .word-review { width: min(440px, calc(100vw - 40px)); }
+  .word-review-body { text-align: center; padding: 26px 24px 18px; }
+  .word-review-word { font-family: var(--font-display); font-size: 30px; font-weight: 600; color: var(--ink); min-height: 44px; word-break: break-word; }
+  .word-review-trans { font-size: 17px; color: var(--accent); margin: 14px 0 6px; line-height: 1.6; word-break: break-word; }
+  .word-review-btns { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+  .word-review-btns button { min-width: 100px; padding: 9px 14px; }
+  .word-review-progress { color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+
   @media (max-width: 1000px) {
     .annot-sidebar { width: 240px; }
   }
@@ -407,6 +431,7 @@
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
     <button id="btn-versions" data-tip="版本快照" data-tip-desc="自动保存的版本快照，可恢复到任意历史版本">版本</button>
     <button id="btn-lib-save" data-tip="存入知识库" data-tip-desc="把当前文档存入知识库，长期保存并分类">存入知识库</button>
+    <button id="btn-translate-settings" data-tip="翻译设置" data-tip-desc="配置翻译引擎（免费 MyMemory / DeepL / LLM）">⚙ 翻译</button>
     <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
     <span class="sep"></span>
@@ -426,6 +451,7 @@
     <button class="view-tab" id="tab-pdf" role="tab" aria-selected="false" data-view="pdf">PDF 工具</button>
     <button class="view-tab" id="tab-repair" role="tab" aria-selected="false" data-view="repair">文档修复</button>
     <button class="view-tab" id="tab-library" role="tab" aria-selected="false" data-view="library">知识库</button>
+    <button class="view-tab" id="tab-wordbook" role="tab" aria-selected="false" data-view="wordbook">单词库</button>
   </nav>
 </div>
 
@@ -634,6 +660,19 @@
   </div>
 </section>
 
+<section class="lib-tool" id="wordbook-tool" hidden>
+  <div class="lib-layout">
+    <div class="lib-main">
+      <div class="lib-toolbar">
+        <input type="search" id="word-search" placeholder="搜索单词…" aria-label="搜索单词">
+        <button id="word-review" class="primary">开始复习</button>
+        <span class="lib-count" id="word-count"></span>
+      </div>
+      <div class="lib-list" id="word-list"></div>
+    </div>
+  </div>
+</section>
+
 <footer class="statusbar">
   <span id="status">0 字符 · 0 词 · 富文本</span>
   <span class="hint">字号 / 颜色 / 高亮会保留在导出文件中；切换「Markdown 源码」时以内联 HTML 保留</span>
@@ -677,6 +716,75 @@
 </div>
 
 <div class="tooltip" id="tooltip"><div class="tt-title"></div><div class="tt-desc"></div></div>
+
+<div class="sel-bar" id="sel-bar" hidden>
+  <div class="sel-bar-head">
+    <span class="sel-word" id="sel-word"></span>
+    <button class="sel-close" id="sel-close" aria-label="关闭">×</button>
+  </div>
+  <div class="sel-actions">
+    <button id="sel-translate" class="primary">翻译</button>
+    <button id="sel-save">存入单词库</button>
+  </div>
+  <div class="sel-result" id="sel-result" hidden>
+    <div class="sel-result-text" id="sel-result-text"></div>
+    <div class="sel-result-actions">
+      <button id="sel-copy">复制译文</button>
+      <button id="sel-save2">存入单词库</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="word-review-modal" hidden>
+  <div class="modal word-review" role="dialog" aria-modal="true" aria-labelledby="word-review-title">
+    <div class="modal-head">
+      <div class="modal-title" id="word-review-title">单词复习</div>
+      <button class="modal-close" id="word-review-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body word-review-body">
+      <div class="word-review-word" id="word-review-word"></div>
+      <div class="word-review-trans" id="word-review-trans" hidden></div>
+      <button id="word-review-flip" class="outline">显示释义</button>
+      <div class="word-review-btns">
+        <button id="word-review-again" class="outline">不认识</button>
+        <button id="word-review-known" class="primary">认识</button>
+      </div>
+      <div class="word-review-progress" id="word-review-progress"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="ts-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ts-title">
+    <div class="modal-head">
+      <div class="modal-title" id="ts-title">翻译设置</div>
+      <button class="modal-close" id="ts-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="lib-field-label">翻译引擎</label>
+      <select class="lib-text-input" id="ts-engine">
+        <option value="mymemory">MyMemory（免费，无需 key）</option>
+        <option value="deepl">DeepL API</option>
+        <option value="llm">LLM（OpenAI 兼容接口，适合专业词汇）</option>
+      </select>
+      <div id="ts-deepl-wrap" hidden>
+        <label class="lib-field-label">DeepL API Key</label>
+        <input type="password" class="lib-text-input" id="ts-deepl-key" placeholder="DeepL 官方 API Key">
+      </div>
+      <div id="ts-llm-wrap" hidden>
+        <label class="lib-field-label">API Key</label>
+        <input type="password" class="lib-text-input" id="ts-llm-key" placeholder="API Key">
+        <label class="lib-field-label">接口地址</label>
+        <input type="text" class="lib-text-input" id="ts-llm-url" placeholder="如 https://api.deepseek.com/v1 或 https://api.openai.com/v1">
+        <label class="lib-field-label">模型</label>
+        <input type="text" class="lib-text-input" id="ts-llm-model" placeholder="如 deepseek-chat / gpt-4o-mini">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button id="ts-save" class="primary">保存</button>
+    </div>
+  </div>
+</div>
 
 <div class="drop-overlay" id="drop-overlay" aria-hidden="true">
   <div class="drop-box">
@@ -1611,6 +1719,244 @@
     if (!libCatModal.hidden && e.key === 'Escape') libCatModal.hidden = true;
   });
 
+  // ===== 翻译（MyMemory 默认 + DeepL / LLM 可配）=====
+  const TS_KEY = 'folio.translate';
+  function getTranslateCfg() { try { return JSON.parse(localStorage.getItem(TS_KEY) || 'null') || {}; } catch (e) { return {}; } }
+  function setTranslateCfg(cfg) { localStorage.setItem(TS_KEY, JSON.stringify(cfg)); }
+
+  async function translateText(text) {
+    const cfg = getTranslateCfg();
+    const engine = cfg.engine || 'mymemory';
+    if (engine === 'deepl' && cfg.deeplKey) {
+      const r = await fetch('https://api-free.deepl.com/v2/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'DeepL-Auth-Key ' + cfg.deeplKey },
+        body: JSON.stringify({ text: [text], target_lang: 'ZH' })
+      });
+      const d = await r.json();
+      if (d.translations && d.translations[0]) return d.translations[0].text;
+      throw new Error('DeepL 返回异常，请检查 key');
+    }
+    if (engine === 'llm' && cfg.llmKey) {
+      const base = (cfg.llmBaseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+      const r = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.llmKey },
+        body: JSON.stringify({
+          model: cfg.llmModel || 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: '你是专业译者。把用户给出的英文准确翻译成简体中文，专业术语用最恰当的中文表达。只输出译文，不要任何解释。' },
+            { role: 'user', content: text }
+          ]
+        })
+      });
+      const d = await r.json();
+      const content = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+      if (content) return content.trim();
+      throw new Error('LLM 返回异常，请检查 key / 接口 / 模型');
+    }
+    const r = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text.slice(0, 480)) + '&langpair=en|zh-CN');
+    const d = await r.json();
+    const t = d.responseData && d.responseData.translatedText;
+    if (t) return t;
+    throw new Error('翻译失败，请检查网络或换用其他引擎');
+  }
+
+  // ===== 划词 / 划句翻译浮窗 =====
+  const selBar = document.getElementById('sel-bar');
+  let selText = '';
+  function hideSelBar() { selBar.hidden = true; document.getElementById('sel-result').hidden = true; selText = ''; }
+  function positionSelBar(range) {
+    const r = range.getBoundingClientRect();
+    let top = r.bottom + 8, left = r.left;
+    if (top + selBar.offsetHeight > window.innerHeight - 8) top = r.top - selBar.offsetHeight - 8;
+    left = Math.max(8, Math.min(left, window.innerWidth - selBar.offsetWidth - 8));
+    selBar.style.top = top + 'px';
+    selBar.style.left = left + 'px';
+  }
+  function showSelBar(range, text) {
+    selText = text.trim();
+    if (!selText) return;
+    document.getElementById('sel-word').textContent = selText.length > 60 ? selText.slice(0, 60) + '…' : selText;
+    document.getElementById('sel-result').hidden = true;
+    selBar.hidden = false;
+    positionSelBar(range);
+  }
+  editor.addEventListener('mouseup', () => {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const t = sel.toString().trim();
+    if (t && editor.contains(sel.anchorNode)) showSelBar(sel.getRangeAt(0), t);
+    else hideSelBar();
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (!selBar.hidden && !selBar.contains(e.target)) hideSelBar();
+  });
+  document.getElementById('sel-close').addEventListener('click', hideSelBar);
+
+  document.getElementById('sel-translate').addEventListener('click', async () => {
+    if (!selText) return;
+    const res = document.getElementById('sel-result');
+    const textEl = document.getElementById('sel-result-text');
+    res.hidden = false;
+    textEl.textContent = '翻译中…';
+    try { textEl.textContent = await translateText(selText); }
+    catch (e) { textEl.textContent = e.message; }
+  });
+  document.getElementById('sel-copy').addEventListener('click', () => {
+    copyToClipboard(document.getElementById('sel-result-text').textContent);
+  });
+
+  function extractContext(sel) {
+    try {
+      const full = editor.innerText.replace(/\s+/g, ' ');
+      const i = full.indexOf(sel);
+      if (i < 0) return '';
+      const start = Math.max(0, i - 60);
+      const end = Math.min(full.length, i + sel.length + 60);
+      return full.slice(start, end).trim();
+    } catch (e) { return ''; }
+  }
+  function saveSelectionToWordbook() {
+    if (!selText) return;
+    const trans = document.getElementById('sel-result').hidden ? '' : document.getElementById('sel-result-text').textContent;
+    saveWord({ word: selText.slice(0, 120), trans: trans, context: extractContext(selText) });
+    hideSelBar();
+    showToast('已存入单词库');
+  }
+  document.getElementById('sel-save').addEventListener('click', saveSelectionToWordbook);
+  document.getElementById('sel-save2').addEventListener('click', saveSelectionToWordbook);
+
+  // ===== 单词库 =====
+  const WORDS_KEY = 'folio.words';
+  function getWords() { try { return JSON.parse(localStorage.getItem(WORDS_KEY) || '[]'); } catch (e) { return []; } }
+  function setWords(list) { localStorage.setItem(WORDS_KEY, JSON.stringify(list)); }
+  function saveWord(entry) {
+    const words = getWords();
+    words.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), word: entry.word, trans: entry.trans || '', context: entry.context || '', addedAt: Date.now(), known: false, reviewCount: 0 });
+    setWords(words.slice(0, 3000));
+    renderWords();
+  }
+
+  const wordList = document.getElementById('word-list');
+  const wordCount = document.getElementById('word-count');
+  const wordSearch = document.getElementById('word-search');
+  function renderWords() {
+    const q = wordSearch.value.trim().toLowerCase();
+    const words = getWords().filter(w => !q || w.word.toLowerCase().includes(q) || (w.trans || '').toLowerCase().includes(q));
+    const total = getWords().length;
+    wordCount.textContent = total + ' 词 · ' + getWords().filter(w => w.known).length + ' 已认识';
+    if (!words.length) {
+      wordList.innerHTML = '<div class="hist-empty">' + (total ? '没有匹配的单词' : '单词库还是空的。在编辑器里选中文字，点「翻译」或「存入单词库」积累单词。') + '</div>';
+      return;
+    }
+    wordList.innerHTML = words.map(w =>
+      '<div class="lib-doc">' +
+        '<div class="main">' +
+          '<div class="title">' + escapeHtml(w.word) + (w.known ? ' <span style="color:var(--accent);font-size:11px;">✓</span>' : '') + '</div>' +
+          '<div class="meta">' + new Date(w.addedAt).toLocaleString('zh-CN', { hour12: false }) + (w.trans ? ' · ' + escapeHtml(w.trans.slice(0, 60)) : '') + '</div>' +
+          (w.context ? '<div class="snippet">' + escapeHtml(w.context) + '</div>' : '') +
+        '</div>' +
+        '<div class="acts"><button class="hist-del" data-remove="' + w.id + '">删除</button></div>' +
+      '</div>'
+    ).join('');
+  }
+  wordSearch.addEventListener('input', renderWords);
+  wordList.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-remove]');
+    if (!del) return;
+    setWords(getWords().filter(w => w.id !== del.dataset.remove));
+    renderWords();
+    showToast('已删除');
+  });
+
+  // 单词复习
+  const reviewModal = document.getElementById('word-review-modal');
+  let reviewQueue = [], reviewIdx = 0;
+  function showReviewWord() {
+    const progress = document.getElementById('word-review-progress');
+    if (reviewIdx >= reviewQueue.length) {
+      document.getElementById('word-review-word').textContent = '复习完成！';
+      document.getElementById('word-review-trans').hidden = true;
+      document.getElementById('word-review-flip').style.display = 'none';
+      document.getElementById('word-review-known').style.display = 'none';
+      document.getElementById('word-review-again').style.display = 'none';
+      progress.textContent = '共 ' + reviewQueue.length + ' 个单词';
+      return;
+    }
+    const w = reviewQueue[reviewIdx];
+    document.getElementById('word-review-word').textContent = w.word;
+    document.getElementById('word-review-trans').textContent = w.trans || '（无释义）';
+    document.getElementById('word-review-trans').hidden = true;
+    document.getElementById('word-review-flip').style.display = '';
+    document.getElementById('word-review-known').style.display = '';
+    document.getElementById('word-review-again').style.display = '';
+    progress.textContent = (reviewIdx + 1) + ' / ' + reviewQueue.length;
+  }
+  function startReview() {
+    const words = getWords();
+    if (!words.length) { showToast('单词库为空，先存入一些单词吧'); return; }
+    reviewQueue = words.slice().sort(() => Math.random() - 0.5);
+    reviewIdx = 0;
+    reviewModal.hidden = false;
+    showReviewWord();
+  }
+  document.getElementById('word-review').addEventListener('click', startReview);
+  document.getElementById('word-review-close').addEventListener('click', () => { reviewModal.hidden = true; });
+  reviewModal.addEventListener('mousedown', (e) => { if (e.target === reviewModal) reviewModal.hidden = true; });
+  document.getElementById('word-review-flip').addEventListener('click', () => {
+    document.getElementById('word-review-trans').hidden = false;
+  });
+  function rateCurrent(known) {
+    const w = reviewQueue[reviewIdx];
+    if (w) {
+      const words = getWords();
+      const hit = words.find(x => x.id === w.id);
+      if (hit) { hit.known = known; hit.reviewCount++; }
+      setWords(words);
+    }
+    reviewIdx++;
+    showReviewWord();
+  }
+  document.getElementById('word-review-known').addEventListener('click', () => rateCurrent(true));
+  document.getElementById('word-review-again').addEventListener('click', () => rateCurrent(false));
+
+  // 翻译设置
+  const tsModal = document.getElementById('ts-modal');
+  function syncTsFields() {
+    const engine = document.getElementById('ts-engine').value;
+    document.getElementById('ts-deepl-wrap').hidden = engine !== 'deepl';
+    document.getElementById('ts-llm-wrap').hidden = engine !== 'llm';
+  }
+  document.getElementById('btn-translate-settings').addEventListener('click', () => {
+    const cfg = getTranslateCfg();
+    document.getElementById('ts-engine').value = cfg.engine || 'mymemory';
+    document.getElementById('ts-deepl-key').value = cfg.deeplKey || '';
+    document.getElementById('ts-llm-key').value = cfg.llmKey || '';
+    document.getElementById('ts-llm-url').value = cfg.llmBaseUrl || '';
+    document.getElementById('ts-llm-model').value = cfg.llmModel || '';
+    syncTsFields();
+    tsModal.hidden = false;
+  });
+  document.getElementById('ts-engine').addEventListener('change', syncTsFields);
+  document.getElementById('ts-close').addEventListener('click', () => { tsModal.hidden = true; });
+  tsModal.addEventListener('mousedown', (e) => { if (e.target === tsModal) tsModal.hidden = true; });
+  document.getElementById('ts-save').addEventListener('click', () => {
+    setTranslateCfg({
+      engine: document.getElementById('ts-engine').value,
+      deeplKey: document.getElementById('ts-deepl-key').value.trim(),
+      llmKey: document.getElementById('ts-llm-key').value.trim(),
+      llmBaseUrl: document.getElementById('ts-llm-url').value.trim(),
+      llmModel: document.getElementById('ts-llm-model').value.trim()
+    });
+    tsModal.hidden = true;
+    showToast('翻译设置已保存');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!reviewModal.hidden && e.key === 'Escape') reviewModal.hidden = true;
+    if (!tsModal.hidden && e.key === 'Escape') tsModal.hidden = true;
+  });
+
   // toast 提示
   const toast = document.getElementById('toast');
   let toastTimer;
@@ -1649,6 +1995,7 @@
   const pdfTool = document.getElementById('pdf-tool');
   const repairTool = document.getElementById('repair-tool');
   const libraryTool = document.getElementById('library-tool');
+  const wordbookTool = document.getElementById('wordbook-tool');
 
   function setView(v) {
     view = v;
@@ -1665,12 +2012,14 @@
     pdfTool.hidden = (v !== 'pdf');
     repairTool.hidden = (v !== 'repair');
     libraryTool.hidden = (v !== 'library');
+    wordbookTool.hidden = (v !== 'wordbook');
     if (isEditor) updateStatus();
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
     else if (v === 'pdf') status.textContent = 'PDF 工具 · 合并 / 拆分';
     else if (v === 'repair') status.textContent = '文档修复 · 乱码 / 文字提取';
-    else { renderLibrary(); status.textContent = '知识库 · 分类 / 长期保存'; }
+    else if (v === 'library') { renderLibrary(); status.textContent = '知识库 · 分类 / 长期保存'; }
+    else { renderWords(); status.textContent = '单词库 · 划词积累 / 复习'; }
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
