@@ -138,8 +138,20 @@
   .pop-actions .confirm:hover { background: var(--accent-strong); }
   .pop-actions .cancel { background: transparent; }
 
-  /* 工作区（编辑器 + 批注侧栏） */
+  /* 工作区（导航 + 编辑器 + 批注侧栏） */
   .workspace { flex: 1; display: flex; min-height: 0; }
+  .nav-pane { width: 220px; flex: 0 0 auto; background: var(--sheet); border-right: 1px solid var(--hairline); display: flex; flex-direction: column; min-height: 0; }
+  .nav-pane[hidden] { display: none !important; }
+  .nav-pane-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--hairline); }
+  .nav-pane-title { font-family: var(--font-display); font-size: 14px; font-weight: 600; color: var(--ink); }
+  .nav-head-right { display: flex; align-items: center; gap: 8px; }
+  .nav-count { font-size: 11px; color: var(--muted); background: #F0EDE6; border-radius: 999px; padding: 2px 8px; }
+  .nav-close { font-size: 16px; line-height: 1; padding: 0 4px; border: none; background: transparent; color: var(--muted); cursor: pointer; }
+  .nav-close:hover { color: var(--ink); }
+  .nav-body { flex: 1; overflow-y: auto; padding: 8px; }
+  .nav-item { display: block; width: 100%; text-align: left; font-family: var(--font-ui); font-size: 13px; padding: 6px 8px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .15s var(--ease), color .15s var(--ease); }
+  .nav-item:hover { background: #F3F0E9; color: var(--ink); }
+  .nav-empty { color: var(--muted); font-size: 12px; padding: 12px 8px; }
   .annot-sidebar { width: 300px; flex: 0 0 auto; background: var(--sheet); border-left: 1px solid var(--hairline); display: flex; flex-direction: column; min-height: 0; }
   .annot-sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
   .annot-sidebar-title { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--ink); }
@@ -384,6 +396,7 @@
 
   @media (max-width: 1000px) {
     .annot-sidebar { width: 240px; }
+    .nav-pane { width: 180px; }
   }
 
   @media (max-width: 760px) {
@@ -392,6 +405,7 @@
     .tabbar { padding: 0 16px; }
     .stage { padding: 16px 10px 60px; }
     .annot-sidebar { display: none; }
+    .nav-pane { display: none; }
     .zip-tool { padding: 16px 10px 60px; }
     .zip-grid { grid-template-columns: 1fr; }
     .lib-tool { padding: 16px 10px 60px; }
@@ -400,7 +414,7 @@
   }
 
   @media print {
-    .toprule, header.masthead, .tabbar, .toolbar, footer.statusbar, .tooltip, .annot-sidebar { display: none !important; }
+    .toprule, header.masthead, .tabbar, .toolbar, footer.statusbar, .tooltip, .annot-sidebar, .nav-pane { display: none !important; }
     .stage { padding: 0; background: #fff; overflow: visible; }
     .editor { max-width: none; margin: 0; padding: 0; box-shadow: none; min-height: 0; border-radius: 0; }
     .editor:empty::before { content: none; }
@@ -430,6 +444,7 @@
     <button id="btn-sample" data-tip="示例" data-tip-desc="填入一份示例文档，方便快速体验">示例</button>
     <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
     <button id="btn-versions" data-tip="版本快照" data-tip-desc="自动保存的版本快照，可恢复到任意历史版本">版本</button>
+    <button id="btn-nav" data-tip="导航窗格" data-tip-desc="显示/隐藏文档标题导航（长文档快速定位）">导航</button>
     <button id="btn-lib-save" data-tip="存入知识库" data-tip-desc="把当前文档存入知识库，长期保存并分类">存入知识库</button>
     <button id="btn-translate-settings" data-tip="翻译设置" data-tip-desc="配置翻译引擎（免费 MyMemory / DeepL / LLM）">⚙ 翻译</button>
     <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
@@ -523,6 +538,16 @@
 </div>
 
 <div class="workspace" id="workspace">
+  <aside class="nav-pane" id="nav-pane" aria-label="文档导航">
+    <div class="nav-pane-head">
+      <span class="nav-pane-title">导航</span>
+      <span class="nav-head-right">
+        <span class="nav-count" id="nav-count">0</span>
+        <button class="nav-close" id="nav-close" aria-label="关闭导航">×</button>
+      </span>
+    </div>
+    <div class="nav-body" id="nav-list"></div>
+  </aside>
   <div class="stage">
     <div class="editor" id="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Markdown 编辑器"></div>
     <textarea class="source" id="source" style="display:none" placeholder="# 在这里粘贴或编辑 Markdown 源码…" aria-label="Markdown 源码"></textarea>
@@ -1976,6 +2001,48 @@
     if (!reviewModal.hidden && e.key === 'Escape') reviewModal.hidden = true;
     if (!tsModal.hidden && e.key === 'Escape') tsModal.hidden = true;
   });
+
+  // ===== 导航窗格（文档大纲）=====
+  const navPane = document.getElementById('nav-pane');
+  const navList = document.getElementById('nav-list');
+  document.getElementById('btn-nav').addEventListener('click', () => { navPane.hidden = !navPane.hidden; });
+  document.getElementById('nav-close').addEventListener('click', () => { navPane.hidden = true; });
+
+  function refreshNav() {
+    const headings = editor.querySelectorAll('h1,h2,h3,h4,h5,h6');
+    document.getElementById('nav-count').textContent = headings.length;
+    if (!headings.length) {
+      navList.innerHTML = '<div class="nav-empty">文档还没有标题</div>';
+      return;
+    }
+    navList.innerHTML = Array.from(headings).map((h, i) => {
+      const level = Number(h.tagName[1]);
+      const text = h.textContent.trim() || '（无标题）';
+      return '<button class="nav-item" data-idx="' + i + '" style="padding-left:' + (6 + (level - 1) * 14) + 'px">' + escapeHtml(text) + '</button>';
+    }).join('');
+  }
+
+  // 编辑器内容变化时自动刷新大纲（输入 / 载入 / 恢复 / 导入 / 打开知识库等）
+  let navTimer;
+  const navObserver = new MutationObserver(() => {
+    clearTimeout(navTimer);
+    navTimer = setTimeout(refreshNav, 250);
+  });
+  navObserver.observe(editor, { childList: true, subtree: true, characterData: true });
+
+  navList.addEventListener('click', (e) => {
+    const btn = e.target.closest('.nav-item');
+    if (!btn) return;
+    const headings = editor.querySelectorAll('h1,h2,h3,h4,h5,h6');
+    const h = headings[Number(btn.dataset.idx)];
+    if (!h) return;
+    h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const prev = h.style.outline;
+    h.style.outline = '2px solid var(--accent)';
+    h.style.outlineOffset = '4px';
+    setTimeout(() => { h.style.outline = prev; h.style.outlineOffset = ''; }, 1200);
+  });
+  refreshNav();
 
   // toast 提示
   const toast = document.getElementById('toast');
