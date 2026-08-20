@@ -588,10 +588,12 @@
   <button data-cmd="removeFormat" data-tip="清除格式" data-tip-desc="移除选中文字的所有格式（含颜色高亮）">清除格式</button>
   <button id="btn-annot" data-tip="批注" data-tip-desc="给选中文字添加批注（高亮 + 备注）">批注</button>
   <span class="sep"></span>
-  <button data-cmd="formatBlock" data-value="<h1>" data-tip="一级标题" data-tip-desc="把当前段落设为一级标题">H1</button>
-  <button data-cmd="formatBlock" data-value="<h2>" data-tip="二级标题" data-tip-desc="把当前段落设为二级标题">H2</button>
-  <button data-cmd="formatBlock" data-value="<h3>" data-tip="三级标题" data-tip-desc="把当前段落设为三级标题">H3</button>
-  <button data-cmd="formatBlock" data-value="<p>" data-tip="正文段落" data-tip-desc="把当前段落恢复为正文">¶</button>
+  <select id="heading-style" data-tip="样式" data-tip-desc="当前段落样式（自动识别，也可手动设置）：正文 / 标题 1-3">
+    <option value="p">正文</option>
+    <option value="h1">标题 1</option>
+    <option value="h2">标题 2</option>
+    <option value="h3">标题 3</option>
+  </select>
   <span class="sep"></span>
   <button data-cmd="justifyLeft" data-tip="左对齐" data-tip-desc="当前段落左对齐">左</button>
   <button data-cmd="justifyCenter" data-tip="居中" data-tip-desc="当前段落居中">中</button>
@@ -1312,6 +1314,34 @@
     const v = fontSize.value; fontSize.value = '';
     if (v) wrapSelection('font-size:' + v + 'pt');
   });
+
+  // 标题样式：自动识别当前段落级别 + 手动设置（参考 Word 样式下拉）
+  const headingStyle = document.getElementById('heading-style');
+  function detectHeadingLevel() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return 'p';
+    const node = sel.anchorNode;
+    let el = node && node.nodeType === 3 ? node.parentElement : node;
+    while (el && el !== editor) {
+      if (/^H[1-6]$/.test(el.tagName)) return el.tagName.toLowerCase();
+      el = el.parentElement;
+    }
+    return 'p';
+  }
+  function syncHeadingStyle() {
+    if (document.activeElement === headingStyle) return; // 用户正在操作下拉时不打扰
+    headingStyle.value = detectHeadingLevel();
+  }
+  headingStyle.addEventListener('change', (e) => {
+    const val = e.target.value || 'p';
+    execRestored('formatBlock', '<' + val + '>');
+    syncHeadingStyle();
+  });
+  // 光标在编辑器内移动/点击时自动识别标题级别
+  editor.addEventListener('keyup', syncHeadingStyle);
+  editor.addEventListener('mouseup', syncHeadingStyle);
+  editor.addEventListener('click', syncHeadingStyle);
+  editor.addEventListener('input', syncHeadingStyle);
 
   // ===== 色板弹窗（确认填充 / 取消）=====
   const TEXT_COLORS = ['#1B1A17','#57544C','#8E897C','#FFFFFF','#C1121F','#E4572E','#D97706','#0D9488','#1D4ED8','#7C3AED','#BE185D','#000000'];
