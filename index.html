@@ -1003,8 +1003,9 @@
     return -1;
   }
   function extractLatexRun(text, start) {
-    // 从 \command 开始贪婪消费公式片段（\text{...} \frac{...} 及货币 $ 等），遇普通文字/换行停止
+    // 从 \command 开始贪婪消费公式片段（\text{...} \frac{...} \boxed{...} \times 及货币 $ 等），遇普通文字/换行停止
     let i = start;
+    let first = true;
     while (i < text.length) {
       const c = text[i];
       if (c === '\\' && /[a-zA-Z]/.test(text[i + 1] || '')) {
@@ -1021,9 +1022,12 @@
           const e = readBalancedGroup(text, i);
           if (e < 0) return -1;
           i = e;
-          continue;
+        } else if (first) {
+          return -1; // 起始命令必须带参数（避免把 C:\Program 等误当公式）
         }
-        return -1;
+        // 无参数命令（\times \cdot 等）在公式中间允许继续
+        first = false;
+        continue;
       }
       if (c === '{') {
         const e = readBalancedGroup(text, i);
@@ -1036,6 +1040,14 @@
       return i;
     }
     return i;
+  }
+  function escapeTex(s) {
+    // LaTeX 特殊字符转义（只转未转义的）：$ 货币、% 注释、# 宏参、& 对齐
+    return s
+      .replace(/(^|[^\\])\$/g, '$1\\$')
+      .replace(/(^|[^\\])%/g, '$1\\%')
+      .replace(/(^|[^\\])#/g, '$1\\#')
+      .replace(/(^|[^\\])&/g, '$1\\&');
   }
   function findMathEnd(text, start) {
     // start 指向起始 '$'。返回配对的 '$'：要求花括号平衡、在深度 0、且紧跟非数字（排除货币 $6 等）；找不到返回 -1
@@ -1141,7 +1153,7 @@
         const span = document.createElement('span');
         span.className = p.display ? 'math-block' : 'math-inline';
         span.setAttribute('data-tex', p.raw ? p.tex : (p.display ? '$$' : '$') + p.tex + (p.display ? '$$' : '$'));
-        const tex = p.tex.replace(/(^|[^\\])\$/g, '$1\\$'); // 货币 $ 转义为 \$（已转义的保留）
+        const tex = escapeTex(p.tex); // 转义 $ % # &（已转义的保留）
         try { span.innerHTML = katex.renderToString(tex, { displayMode: p.display, throwOnError: false }); }
         catch (err) { span.textContent = p.tex; }
         frag.appendChild(span);
@@ -2248,7 +2260,7 @@
   let mapSeq = 0;
   // 给 markmap 的 markdown 做预处理：裸 LaTeX 包成 $...$，货币 $ 转义，代码块跳过
   function wrapBareLatexInLine(line) {
-    const esc = (s) => s.replace(/(^|[^\\])\$/g, '$1\\$'); // 只转义未转义的货币 $
+    const esc = escapeTex; // 转义 $ % # &（未转义的）
     let out = '';
     let i = 0;
     while (i < line.length) {
@@ -3319,6 +3331,14 @@ def convert(md: str) -> str:
 行内公式 $E = mc^2$ 与 $x_1^2$，以及独立公式：
 
 $$a^2 + b^2 = c^2$$
+
+## 会计公式示例
+
+$$\boxed{\\text{C/S Ratio} = \\frac{\\text{Contribution}}{\\text{Sales}} \\times 100%}$$
+
+$$\\text{OAR} = \\frac{$30,000}{5,000 \\text{ machine hours}} = $6 \\text{ per machine hour}$$
+
+$$\\text{MOS (%)} = \\frac{10,000 - 6,250}{10,000} = 37.5%$$
 
 > 提示：选中文字后，用顶部工具栏调整字号、颜色、高亮、对齐，就像用 Word 一样。
 
