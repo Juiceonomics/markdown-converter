@@ -523,26 +523,49 @@
 <div class="toolbar" id="toolbar">
   <select id="font-family" data-tip="字体" data-tip-desc="给选中文字设置字体">
     <option value="" selected>字体</option>
-    <option value="宋体, SimSun, serif">宋体</option>
-    <option value="微软雅黑, 'Microsoft YaHei', sans-serif">微软雅黑</option>
-    <option value="楷体, KaiTi, serif">楷体</option>
-    <option value="黑体, SimHei, sans-serif">黑体</option>
-    <option value="仿宋, FangSong, serif">仿宋</option>
-    <option value="Arial, Helvetica, sans-serif">Arial</option>
-    <option value="'Times New Roman', Times, serif">Times New Roman</option>
-    <option value="Consolas, monospace">Consolas</option>
+    <optgroup label="中文（论文常用）">
+      <option value="宋体, SimSun, serif">宋体</option>
+      <option value="黑体, SimHei, sans-serif">黑体</option>
+      <option value="仿宋, FangSong, serif">仿宋</option>
+      <option value="楷体, KaiTi, serif">楷体</option>
+      <option value="华文中宋, STZhongsong, serif">华文中宋</option>
+      <option value="华文细黑, STXihei, sans-serif">华文细黑</option>
+      <option value="华文楷体, STKaiti, serif">华文楷体</option>
+      <option value="等线, DengXian, sans-serif">等线</option>
+      <option value="微软雅黑, 'Microsoft YaHei', sans-serif">微软雅黑</option>
+      <option value="幼圆, YouYuan, sans-serif">幼圆</option>
+      <option value="隶书, LiSu, serif">隶书</option>
+      <option value="方正小标宋, FZXiaoBiaoSong-B05S, serif">方正小标宋</option>
+    </optgroup>
+    <optgroup label="西文 / 学术">
+      <option value="'Times New Roman', Times, serif">Times New Roman</option>
+      <option value="Arial, Helvetica, sans-serif">Arial</option>
+      <option value="Cambria, 'Palatino Linotype', serif">Cambria</option>
+      <option value="Calibri, 'Segoe UI', sans-serif">Calibri</option>
+      <option value="Georgia, 'Times New Roman', serif">Georgia</option>
+      <option value="'Palatino Linotype', 'Book Antiqua', Palatino, serif">Palatino Linotype</option>
+      <option value="Garamond, 'EB Garamond', serif">Garamond</option>
+      <option value="Verdana, Geneva, sans-serif">Verdana</option>
+    </optgroup>
+    <optgroup label="等宽">
+      <option value="Consolas, 'Courier New', monospace">Consolas</option>
+      <option value="'Courier New', Courier, monospace">Courier New</option>
+    </optgroup>
   </select>
   <select id="font-size" data-tip="字号" data-tip-desc="给选中文字设置字号（单位：磅）">
     <option value="" selected>字号</option>
     <option value="10.5">10.5 五号</option>
     <option value="12">12 小四</option>
     <option value="14">14 四号</option>
+    <option value="15">15 小三</option>
     <option value="16">16 三号</option>
     <option value="18">18 小二</option>
-    <option value="20">20</option>
+    <option value="22">22 二号</option>
     <option value="24">24 小一</option>
+    <option value="26">26 一号</option>
     <option value="30">30</option>
     <option value="36">36 小初</option>
+    <option value="42">42 初号</option>
   </select>
   <span class="sep"></span>
   <button data-cmd="bold" data-tip="加粗" data-tip-desc="把选中文字加粗（Ctrl+B）"><b>B</b></button>
