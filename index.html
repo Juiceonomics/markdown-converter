@@ -421,7 +421,7 @@
   .map-tool[hidden] { display: none !important; }
   .map-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; max-width: 1100px; margin: 0 auto; }
   .map-hint { font-size: 12.5px; color: var(--muted); }
-  .map-panel { position: relative; flex: 1; min-height: 0; width: 100%; max-width: 1100px; margin: 0 auto; background: var(--sheet); border-radius: 14px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 14px 36px rgba(27,26,23,.08); overflow: hidden; }
+  .map-panel { position: relative; flex: 1; min-height: 260px; width: 100%; max-width: 1100px; margin: 0 auto; background: var(--sheet); border-radius: 14px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 14px 36px rgba(27,26,23,.08); overflow: hidden; }
   .map-panel svg { width: 100%; height: 100%; display: block; }
   .map-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
   .map-empty[hidden] { display: none; }
@@ -2400,31 +2400,50 @@
   }
   async function renderMap() {
     const seq = ++mapSeq;
-    await loadMapAssets();
-    if (seq !== mapSeq) return;
-    const md = prepMarkdownForMap(getCurrentMarkdown() || '');
     const empty = document.getElementById('map-empty');
-    empty.hidden = md.trim().length > 0;
-    if (!md.trim()) return;
-    let root;
     try {
-      root = new window.markmap.Transformer().transform(md).root;
+      await loadMapAssets();
+      if (seq !== mapSeq) return;
+      if (!window.markmap || !window.markmap.Transformer || !window.markmap.Markmap) {
+        empty.hidden = false;
+        empty.textContent = '导图组件加载失败，请刷新重试';
+        return;
+      }
+      const md = prepMarkdownForMap(getCurrentMarkdown() || '');
+      empty.hidden = md.trim().length > 0;
+      if (!md.trim()) return;
+      let root;
+      try {
+        root = new window.markmap.Transformer().transform(md).root;
+      } catch (e) {
+        empty.hidden = false;
+        empty.textContent = '导图生成失败：' + e.message;
+        return;
+      }
+      const svg = document.getElementById('map-svg');
+      requestAnimationFrame(() => {
+        if (seq !== mapSeq) return;
+        try {
+          if (!mmInstance) {
+            mmInstance = window.markmap.Markmap.create(svg, { autoFit: true, duration: 300, initialExpandLevel: 3 }, root);
+          } else {
+            mmInstance.setData(root);
+            mmInstance.fit();
+          }
+          // 容器尺寸就绪后再 fit 一次，避免初始尺寸不对
+          setTimeout(() => { if (seq === mapSeq && mmInstance) mmInstance.fit(); }, 80);
+        } catch (e) {
+          empty.hidden = false;
+          empty.textContent = '渲染失败：' + e.message;
+        }
+      });
     } catch (e) {
       empty.hidden = false;
-      empty.textContent = '导图生成失败：' + e.message;
-      return;
+      empty.textContent = '导图加载失败：' + e.message;
     }
-    const svg = document.getElementById('map-svg');
-    requestAnimationFrame(() => {
-      if (seq !== mapSeq) return;
-      if (!mmInstance) {
-        mmInstance = window.markmap.Markmap.create(svg, { autoFit: true, duration: 300, initialExpandLevel: 3 }, root);
-      } else {
-        mmInstance.setData(root);
-        mmInstance.fit();
-      }
-    });
   }
+  // 窗口缩放时让导图跟随容器尺寸
+  window.addEventListener('resize', () => { if (mmInstance) mmInstance.fit(); });
   document.getElementById('map-refresh').addEventListener('click', () => { renderMap(); showToast('已重新生成'); });
 
   // toast 提示
