@@ -460,6 +460,7 @@
     <button id="btn-translate-settings" data-tip="翻译设置" data-tip-desc="配置翻译引擎（免费 MyMemory / DeepL / LLM）">⚙ 翻译</button>
     <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
+    <button id="btn-clean-emoji" class="ghost" data-tip="清理表情" data-tip-desc="一键删除文档里的 emoji 表情和装饰图标（先预览再确认）">清理表情</button>
     <span class="sep"></span>
     <button id="btn-md" class="outline" data-tip="导出 Markdown" data-tip-desc="导出为 .md 文件">导出 Markdown</button>
     <button id="btn-html" class="outline" data-tip="导出 HTML" data-tip-desc="导出为 .html 网页文件">导出 HTML</button>
@@ -2244,6 +2245,47 @@
     showToast('已载入 Markdown 文本');
   });
   document.addEventListener('keydown', (e) => { if (!pasteModal.hidden && e.key === 'Escape') pasteModal.hidden = true; });
+
+  // ===== 清理 emoji / 装饰图标 =====
+  const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu;
+  function getEditorTextNodes() {
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        let p = node.parentNode;
+        while (p && p !== editor) {
+          const n = p.nodeName;
+          if (n === 'PRE' || n === 'CODE' || n === 'SCRIPT' || n === 'STYLE') return NodeFilter.FILTER_REJECT;
+          p = p.parentNode;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    return nodes;
+  }
+  function scanEmojis() {
+    const found = [];
+    getEditorTextNodes().forEach(n => { const m = n.nodeValue.match(EMOJI_RE); if (m) found.push(...m); });
+    return found;
+  }
+  function removeEmojis() {
+    getEditorTextNodes().forEach(n => { n.nodeValue = n.nodeValue.replace(EMOJI_RE, ''); });
+  }
+  document.getElementById('btn-clean-emoji').addEventListener('click', async () => {
+    if (contentEmpty()) { showToast('内容为空'); return; }
+    const found = scanEmojis();
+    if (!found.length) { showToast('没有发现 emoji 或装饰图标'); return; }
+    const distinct = [...new Set(found)];
+    const preview = distinct.slice(0, 12).join(' ') + (distinct.length > 12 ? ' 等' : '');
+    if (await confirmDialog('发现 ' + found.length + ' 个 emoji/图标，包括：\n' + preview + '\n\n确认全部删除？')) {
+      removeEmojis();
+      saveDraft();
+      renderAllAnnots();
+      updateStatus();
+      showToast('已删除 ' + found.length + ' 个表情/图标');
+    }
+  });
 
   // ===== 思维导图（markmap，从当前文档标题自动生成）=====
   let mapAssetsPromise = null;
