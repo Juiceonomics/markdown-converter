@@ -31,7 +31,7 @@
     --ease: cubic-bezier(0.32, 0.72, 0, 1);
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
   body {
     font-family: var(--font-ui);
     color: var(--ink);
@@ -70,6 +70,7 @@
   .dd-caret.primary-caret:hover { background: var(--accent-strong); color: #fff; }
   .dd {
     position: absolute; top: calc(100% + 8px); right: 0; min-width: 158px; z-index: 90;
+    max-height: calc(100vh - 160px); overflow-y: auto;
     background: var(--sheet); border: 1px solid var(--hairline); border-radius: 12px;
     box-shadow: 0 14px 44px rgba(27,26,23,.16); padding: 6px;
     display: flex; flex-direction: column; gap: 2px;
@@ -475,9 +476,9 @@
     <div class="dd-wrap">
       <button class="dd-trigger" data-dd="file-dd" data-tip="文件" data-tip-desc="载入 Markdown 文件 / 文本 / 示例">文件 ▾</button>
       <div class="dd" id="file-dd" hidden>
-        <button id="btn-load">📄 载入文件</button>
-        <button id="btn-paste">📋 载入文本</button>
-        <button id="btn-sample">✨ 示例</button>
+        <button id="btn-load">载入文件</button>
+        <button id="btn-paste">载入文本</button>
+        <button id="btn-sample">示例</button>
       </div>
     </div>
     <button id="btn-nav" class="ghost" data-tip="导航窗格" data-tip-desc="显示/隐藏文档标题导航">导航</button>
