@@ -60,7 +60,24 @@
   .brand .title { font-family: var(--font-display); font-weight: 700; font-size: 19px; line-height: 1.1; letter-spacing: .01em; }
   .brand .sub { font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 1px; }
   .spacer { flex: 1; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
+  .dd-wrap { position: relative; }
+  .dd-wrap.export-dd { display: inline-flex; align-items: stretch; }
+  .dd-wrap.export-dd #btn-word { border-radius: 999px 0 0 999px; }
+  .dd-caret { padding: 8px 10px; border: 1px solid var(--hairline-strong); border-left: none; border-radius: 0 999px 999px 0; background: #fff; color: var(--ink-2); cursor: pointer; }
+  .dd-caret:hover { background: #F3F0E9; color: var(--ink); }
+  .dd-caret.primary-caret { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .dd-caret.primary-caret:hover { background: var(--accent-strong); color: #fff; }
+  .dd {
+    position: absolute; top: calc(100% + 8px); right: 0; min-width: 158px; z-index: 90;
+    background: var(--sheet); border: 1px solid var(--hairline); border-radius: 12px;
+    box-shadow: 0 14px 44px rgba(27,26,23,.16); padding: 6px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .dd[hidden] { display: none; }
+  .dd button { text-align: left; font-size: 13px; padding: 8px 12px; border: none; background: transparent; color: var(--ink); border-radius: 8px; width: 100%; cursor: pointer; }
+  .dd button:hover { background: #F3F0E9; }
+  .dd button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   button {
     font-family: var(--font-ui); font-size: 13px; font-weight: 600;
     padding: 8px 15px; border-radius: 8px; cursor: pointer;
@@ -83,18 +100,22 @@
   .actions button:not(.primary):not(.outline):hover { background: #F3F0E9; color: var(--ink); }
   .actions .sep { width: 1px; height: 20px; background: var(--hairline); margin: 0 2px; }
 
-  /* 工具栏 */
+  /* 工具栏（单行，超宽横向滚动） */
   .toolbar {
-    display: flex; align-items: center; gap: 3px; flex-wrap: wrap;
-    padding: 8px 20px; background: var(--sheet);
+    display: flex; align-items: center; gap: 2px; flex-wrap: nowrap;
+    overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent;
+    padding: 7px 16px; background: var(--sheet);
     border-bottom: 1px solid var(--hairline); flex: 0 0 auto;
   }
+  .toolbar::-webkit-scrollbar { height: 6px; }
+  .toolbar::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 3px; }
   .toolbar button {
-    font-size: 12.5px; font-weight: 600; padding: 6px 10px; min-width: 30px;
+    font-size: 12.5px; font-weight: 600; padding: 6px 8px; min-width: 28px;
     border-radius: 7px; border: 1px solid transparent; color: var(--ink-2);
+    white-space: nowrap;
   }
   .toolbar button:hover { background: #F3F0E9; color: var(--ink); }
-  .toolbar .sep { width: 1px; height: 20px; background: var(--hairline); margin: 0 6px; }
+  .toolbar .sep { width: 1px; height: 20px; background: var(--hairline); margin: 0 7px; flex: 0 0 auto; }
   .toolbar select {
     font-family: var(--font-ui); font-size: 12.5px; padding: 6px 8px; border-radius: 7px;
     border: 1px solid var(--hairline-strong); background: #fff; color: var(--ink); cursor: pointer;
@@ -296,9 +317,9 @@
   .hist-empty { color: var(--muted); text-align: center; padding: 36px 12px; font-size: 13px; }
 
   /* 视图切换标签 */
-  .tabbar { padding: 0 28px; background: var(--sheet); overflow-x: auto; flex: 0 0 auto; }
-  .view-switch { display: flex; gap: 26px; width: max-content; border-bottom: 1px solid var(--hairline); }
-  .view-tab { font-size: 14px; font-weight: 500; padding: 12px 2px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; position: relative; transition: color .18s var(--ease); }
+  .tabbar { padding: 0 28px; background: var(--sheet); overflow-x: auto; scrollbar-width: thin; flex: 0 0 auto; }
+  .view-switch { display: flex; gap: 20px; width: max-content; border-bottom: 1px solid var(--hairline); }
+  .view-tab { font-size: 13.5px; font-weight: 500; padding: 11px 2px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; position: relative; transition: color .18s var(--ease); }
   .view-tab:hover { color: var(--ink); }
   .view-tab.active { color: var(--ink); font-weight: 600; }
   .view-tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
@@ -412,6 +433,7 @@
   @media (max-width: 760px) {
     .editor { padding: 32px 24px; }
     header.masthead { flex-wrap: wrap; padding: 12px 16px; }
+    .actions { flex-wrap: wrap; }
     .tabbar { padding: 0 16px; }
     .stage { padding: 16px 10px 60px; }
     .annot-sidebar { display: none; }
@@ -450,22 +472,36 @@
   </div>
   <div class="spacer"></div>
   <div class="actions" id="editor-actions">
-    <button id="btn-load" data-tip="载入文件" data-tip-desc="打开本地 .md 或 .txt 文件">载入文件</button>
-    <button id="btn-paste" data-tip="载入文本" data-tip-desc="粘贴 Markdown 文本，直接替换当前内容">载入文本</button>
-    <button id="btn-sample" data-tip="示例" data-tip-desc="填入一份示例文档，方便快速体验">示例</button>
-    <button id="btn-history" data-tip="历史记录" data-tip-desc="查看、恢复或删除之前保存的内容">历史</button>
-    <button id="btn-versions" data-tip="版本快照" data-tip-desc="自动保存的版本快照，可恢复到任意历史版本">版本</button>
-    <button id="btn-nav" data-tip="导航窗格" data-tip-desc="显示/隐藏文档标题导航（长文档快速定位）">导航</button>
-    <button id="btn-lib-save" data-tip="存入知识库" data-tip-desc="把当前文档存入知识库，长期保存并分类">存入知识库</button>
-    <button id="btn-translate-settings" data-tip="翻译设置" data-tip-desc="配置翻译引擎（免费 MyMemory / DeepL / LLM）">⚙ 翻译</button>
-    <button id="btn-source" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">Markdown 源码</button>
+    <div class="dd-wrap">
+      <button class="dd-trigger" data-dd="file-dd" data-tip="文件" data-tip-desc="载入 Markdown 文件 / 文本 / 示例">文件 ▾</button>
+      <div class="dd" id="file-dd" hidden>
+        <button id="btn-load">📄 载入文件</button>
+        <button id="btn-paste">📋 载入文本</button>
+        <button id="btn-sample">✨ 示例</button>
+      </div>
+    </div>
+    <button id="btn-nav" class="ghost" data-tip="导航窗格" data-tip-desc="显示/隐藏文档标题导航">导航</button>
+    <button id="btn-lib-save" class="ghost" data-tip="存入知识库" data-tip-desc="把当前文档存入知识库，长期保存并分类">存入知识库</button>
+    <div class="dd-wrap export-dd">
+      <button id="btn-word" class="primary" data-tip="导出 Word" data-tip-desc="导出为 .doc 文件，Word 可直接打开并保留样式">导出 Word</button>
+      <button class="dd-caret primary-caret" data-dd="export-dd" aria-label="更多导出格式">▾</button>
+      <div class="dd" id="export-dd" hidden>
+        <button id="btn-pdf">导出 PDF</button>
+        <button id="btn-md">导出 Markdown</button>
+        <button id="btn-html">导出 HTML</button>
+      </div>
+    </div>
+    <div class="dd-wrap">
+      <button class="dd-trigger" data-dd="hist-dd" data-tip="历史" data-tip-desc="历史记录 / 版本快照">历史 ▾</button>
+      <div class="dd" id="hist-dd" hidden>
+        <button id="btn-history">历史记录</button>
+        <button id="btn-versions">版本快照</button>
+      </div>
+    </div>
+    <button id="btn-source" class="ghost" data-tip="Markdown 源码" data-tip-desc="查看/编辑源码；颜色字号会以内联 HTML 保留">源码</button>
+    <button id="btn-translate-settings" class="ghost" data-tip="翻译设置" data-tip-desc="配置翻译引擎（免费 MyMemory / DeepL / LLM）">⚙</button>
+    <button id="btn-clean-emoji" class="ghost" data-tip="清理表情" data-tip-desc="一键删除文档里的 emoji 表情和装饰图标（先预览再确认）">清理</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
-    <button id="btn-clean-emoji" class="ghost" data-tip="清理表情" data-tip-desc="一键删除文档里的 emoji 表情和装饰图标（先预览再确认）">清理表情</button>
-    <span class="sep"></span>
-    <button id="btn-md" class="outline" data-tip="导出 Markdown" data-tip-desc="导出为 .md 文件">导出 Markdown</button>
-    <button id="btn-html" class="outline" data-tip="导出 HTML" data-tip-desc="导出为 .html 网页文件">导出 HTML</button>
-    <button id="btn-pdf" class="outline" data-tip="导出 PDF" data-tip-desc="通过浏览器打印对话框，选择「另存为 PDF」">导出 PDF</button>
-    <button id="btn-word" class="primary" data-tip="导出 Word" data-tip-desc="导出为 .doc 文件，Word 可直接打开并保留样式">导出 Word</button>
   </div>
   <input type="file" id="file-input" accept=".md,.markdown,.txt,text/markdown" hidden>
 </header>
@@ -943,6 +979,21 @@
 
   let mode = 'wysiwyg';
   let view = 'editor'; // 'editor' | 'zip'
+
+  // ===== 通用下拉菜单 =====
+  function closeAllDDs() { document.querySelectorAll('.dd').forEach(d => d.hidden = true); }
+  document.querySelectorAll('[data-dd]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const dd = document.getElementById(btn.dataset.dd);
+      if (!dd) return;
+      const wasOpen = !dd.hidden;
+      closeAllDDs();
+      if (!wasOpen) dd.hidden = false;
+    });
+  });
+  document.addEventListener('mousedown', (e) => { if (!e.target.closest('.dd-wrap')) closeAllDDs(); });
+  document.addEventListener('click', (e) => { if (e.target.closest('.dd')) closeAllDDs(); });
 
   // 通用懒加载脚本（用到才加载，避免首屏体积过大）
   const scriptPromises = {};
