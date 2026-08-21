@@ -447,12 +447,16 @@
   }
 
   @media print {
-    .toprule, header.masthead, .tabbar, .toolbar, footer.statusbar, .tooltip, .annot-sidebar, .nav-pane { display: none !important; }
-    .stage { padding: 0; background: #fff; overflow: visible; }
-    .editor { max-width: none; margin: 0; padding: 0; box-shadow: none; min-height: 0; border-radius: 0; }
+    @page { size: A4; margin: 18mm 16mm; }
+    html, body { height: auto; min-height: 0; overflow: visible; }
+    body { background: #fff; }
+    .toprule, header.masthead, .tabbar, .toolbar, footer.statusbar, .tooltip,
+    .annot-sidebar, .nav-pane, .sel-bar, .dd, .modal-backdrop, .toast, .drop-overlay { display: none !important; }
+    .workspace { display: block; height: auto; min-height: 0; overflow: visible; }
+    .stage { display: block; padding: 0; background: #fff; overflow: visible; min-height: 0; }
+    .editor { max-width: none; margin: 0; padding: 0; box-shadow: none; min-height: 0; border-radius: 0; width: 100%; }
     .editor:empty::before { content: none; }
     .source { display: none !important; }
-    body { background: #fff; }
   }
 
   @media (prefers-reduced-motion: reduce) {
