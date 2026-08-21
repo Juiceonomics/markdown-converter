@@ -447,14 +447,16 @@
   }
 
   @media print {
-    @page { size: A4; margin: 18mm 16mm; }
     html, body { height: auto; min-height: 0; overflow: visible; }
     body { background: #fff; }
     .toprule, header.masthead, .tabbar, .toolbar, footer.statusbar, .tooltip,
     .annot-sidebar, .nav-pane, .sel-bar, .dd, .modal-backdrop, .toast, .drop-overlay { display: none !important; }
     .workspace { display: block; height: auto; min-height: 0; overflow: visible; }
     .stage { display: block; padding: 0; background: #fff; overflow: visible; min-height: 0; }
-    .editor { max-width: none; margin: 0; padding: 0; box-shadow: none; min-height: 0; border-radius: 0; width: 100%; }
+    .editor { max-width: none; margin: 0; padding: 0; box-shadow: none; min-height: 0; border-radius: 0; width: 100%; word-break: break-word; }
+    .editor pre { white-space: pre-wrap; word-break: break-word; }
+    .editor table { table-layout: fixed; width: 100%; word-break: break-word; }
+    .editor img { max-width: 100% !important; height: auto; }
     .editor:empty::before { content: none; }
     .source { display: none !important; }
   }
