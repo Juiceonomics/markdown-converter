@@ -379,6 +379,10 @@
   .pdf-split-info { font-size: 13px; color: var(--ink-2); margin: 12px 0; }
   .pdf-split-info input[type="text"] { font-family: var(--font-ui); font-size: 13px; padding: 5px 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; width: 150px; margin: 0 4px; }
   .repair-input { width: 100%; min-height: 92px; resize: vertical; border: 1px solid var(--hairline-strong); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 13px; line-height: 1.6; color: var(--ink); background: #fff; margin-bottom: 10px; box-sizing: border-box; }
+  .bg-preview-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .bg-side { text-align: center; }
+  .bg-label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+  .bg-side img { max-width: 100%; max-height: 180px; border: 1px solid var(--hairline); border-radius: 6px; background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0/20px 20px; }
   .repair-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
   .repair-actions { display: flex; gap: 8px; }
   .repair-actions button { font-size: 12px; padding: 6px 12px; }
@@ -731,9 +735,28 @@
       <ul class="zip-list" id="imgc-list"></ul>
       <button id="imgc-download" class="primary" disabled>压缩并下载</button>
     </div>
+    <div class="zip-card">
+      <h2>去除背景</h2>
+      <div class="imgc-controls">
+        <label class="imgc-label">模式
+          <select id="bg-mode">
+            <option value="pure">纯白去除</option>
+            <option value="smart" selected>智能去白（彩色/艺术字）</option>
+          </select>
+        </label>
+        <label class="imgc-label">阈值 <input type="range" id="bg-threshold" min="0" max="100" value="30"> <span id="bg-threshold-val">30</span></label>
+      </div>
+      <div class="zip-drop" id="bg-drop" role="button" tabindex="0" aria-label="选择要去背景的图片">拖入要抠字的图片到这里，或点击选择</div>
+      <div class="bg-preview-wrap" id="bg-preview-wrap" hidden>
+        <div class="bg-side"><span class="bg-label">原图</span><img id="bg-orig" alt="原图"></div>
+        <div class="bg-side"><span class="bg-label">去背景</span><img id="bg-result" alt="去背景结果"></div>
+      </div>
+      <button id="bg-download" class="primary" disabled>下载透明 PNG</button>
+    </div>
   </div>
   <input type="file" id="imgpdf-file-input" accept="image/*" multiple hidden>
   <input type="file" id="imgc-file-input" accept="image/*" multiple hidden>
+  <input type="file" id="bg-file-input" accept="image/*" hidden>
 </section>
 
 <section class="zip-tool" id="pdf-tool" hidden>
@@ -3045,6 +3068,98 @@
   imgcList.addEventListener('click', (e) => {
     const rm = e.target.closest('[data-rm]');
     if (rm) { imgcItems = imgcItems.filter(x => x.id !== rm.dataset.rm); renderImgcList(); }
+  });
+
+  // ===== 去除背景（阈值法，白底抠彩色/艺术字）=====
+  const bgDrop = document.getElementById('bg-drop');
+  const bgFileInput = document.getElementById('bg-file-input');
+  const bgMode = document.getElementById('bg-mode');
+  const bgThreshold = document.getElementById('bg-threshold');
+  const bgThresholdVal = document.getElementById('bg-threshold-val');
+  const bgPreviewWrap = document.getElementById('bg-preview-wrap');
+  const bgOrig = document.getElementById('bg-orig');
+  const bgResult = document.getElementById('bg-result');
+  const bgDownload = document.getElementById('bg-download');
+  let bgData = null; // { width, height, data: Uint8ClampedArray } 原图像素
+
+  function removeBackground(mode, threshold) {
+    if (!bgData) return null;
+    const { width, height, data } = bgData;
+    const out = new ImageData(width, height);
+    const d = out.data;
+    const th = Math.round(threshold * 2.55); // 0-100 -> 0-255
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      let alpha = 255;
+      if (mode === 'pure') {
+        // 纯白去除：RGB 都接近 255 才变透明
+        if (r >= 255 - th && g >= 255 - th && b >= 255 - th) alpha = 0;
+      } else {
+        // 智能去白：按「离白色的距离」决定透明度，彩色字保留、白底消隐
+        const dwhite = Math.max(255 - r, 255 - g, 255 - b); // 离白最远的通道差
+        if (dwhite <= th) alpha = 0;
+        else alpha = Math.round(Math.min(255, (dwhite - th) / (255 - th) * 255));
+      }
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = alpha;
+    }
+    return out;
+  }
+  function applyBgPreview() {
+    if (!bgData) return;
+    const mode = bgMode.value;
+    const threshold = Number(bgThreshold.value);
+    const result = removeBackground(mode, threshold);
+    if (result) bgResult.src = canvasFromImageData(result).toDataURL('image/png');
+    bgThresholdVal.textContent = threshold;
+  }
+  function canvasFromImageData(imgData) {
+    const c = document.createElement('canvas');
+    c.width = imgData.width; c.height = imgData.height;
+    c.getContext('2d').putImageData(imgData, 0, 0);
+    return c;
+  }
+
+  bgDrop.addEventListener('click', () => bgFileInput.click());
+  bgDrop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bgFileInput.click(); } });
+  bgFileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleBgFile(e.target.files[0]); bgFileInput.value = ''; });
+  bindZipDrop(bgDrop, (files) => { if (files[0]) handleBgFile(files[0]); });
+
+  function handleBgFile(file) {
+    if (!file.type || !file.type.startsWith('image/')) { showToast('请选择图片文件'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        bgData = ctx.getImageData(0, 0, c.width, c.height);
+        bgOrig.src = reader.result;
+        // 先转成 ImageData，再读取完整（避免跨域污染）
+        bgData = ctx.getImageData(0, 0, c.width, c.height);
+        bgPreviewWrap.hidden = false;
+        bgDownload.disabled = false;
+        showToast('已载入图片：' + file.name);
+        applyBgPreview();
+      };
+      img.onerror = () => showToast('图片载入失败');
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  bgMode.addEventListener('change', applyBgPreview);
+  bgThreshold.addEventListener('input', applyBgPreview);
+  bgDownload.addEventListener('click', () => {
+    if (!bgData) return;
+    const mode = bgMode.value; const threshold = Number(bgThreshold.value);
+    const result = removeBackground(mode, threshold);
+    if (!result) return;
+    const url = canvasFromImageData(result).toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url; a.download = '去背景.png';
+    a.click();
+    showToast('已下载透明背景 PNG');
   });
 
   imgcDownloadBtn.addEventListener('click', async () => {
