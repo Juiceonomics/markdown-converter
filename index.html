@@ -3602,10 +3602,9 @@
       downloadBlob(blob, title + '.docx');
       showToast('已导出 Word（.docx）：' + title);
     } catch (e) {
-      // 自动回退到 .doc（HTML 包装）
-      const blob = new Blob(['﻿', buildWordHtml(title, bodyHtml)], { type: 'application/msword' });
-      downloadBlob(blob, title + '.doc');
-      showToast('已导出 Word（.doc 兼容，因：' + e.message + '）');
+      // docx 生成失败：不再偷偷回退成 HTML 包装的 .doc（手机端会乱码），而是明确提示，避免生成乱码文件
+      showToast('Word 导出失败：' + e.message + '。请重试；若持续失败可先用「导出 PDF」。');
+      return;
     }
   });
 
