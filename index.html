@@ -1953,7 +1953,8 @@
   }
   function loadLibraryDocToEditor(doc) {
     editor.innerHTML = doc.html;
-    currentFileBase = (doc.title || '').replace(/[\\/:*?"<>|]/g, '') || null;
+    // 打开知识库文档：把文件名记忆设为文档标题（以此命名导出），但不破坏「从文件导入」的原文件名
+    if (doc.title) currentFileBase = (doc.title || '').replace(/[\\/:*?"<>|]/g, '') || null;
     if (mode === 'source') setMode('wysiwyg');
     updateStatus();
     renderAllAnnots();
@@ -3569,7 +3570,9 @@
   }
 
   function deriveBaseName() {
-    return sanitizeFilename(currentFileBase || deriveTitle());
+    const raw = currentFileBase || deriveTitle();
+    const cleaned = sanitizeFilename(raw || '未命名文档');
+    return cleaned || '未命名文档';
   }
 
   document.getElementById('btn-word').addEventListener('click', async () => {
@@ -3584,7 +3587,7 @@
       const doc = htmlToDocx(docx, bodyHtml);
       const blob = await docx.Packer.toBlob(doc);
       downloadBlob(blob, title + '.docx');
-      showToast('已导出 Word（.docx）');
+      showToast('已导出 Word（.docx）：' + title);
     } catch (e) {
       // 自动回退到 .doc（HTML 包装）
       const blob = new Blob(['﻿', buildWordHtml(title, bodyHtml)], { type: 'application/msword' });
