@@ -3158,15 +3158,25 @@
   }
   bgMode.addEventListener('change', applyBgPreview);
   bgThreshold.addEventListener('input', applyBgPreview);
+  // 随机编号文件名（浏览器无法直接保存到桌面，用随机名避免重复覆盖；下载位置由浏览器默认定）
+  function randomName(prefix, ext) {
+    const hex = () => Math.random().toString(16).slice(2, 9);
+    return prefix + '_' + hex() + '.' + ext;
+  }
+  function triggerDownload(href, filename) {
+    const a = document.createElement('a');
+    a.href = href; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
   bgDownload.addEventListener('click', () => {
     if (!bgData) return;
     const mode = bgMode.value; const threshold = Number(bgThreshold.value);
     const result = removeBackground(mode, threshold);
     if (!result) return;
     const url = canvasFromImageData(result).toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = url; a.download = '去背景.png';
-    a.click();
+    triggerDownload(url, randomName('bg', 'png'));
     showToast('已下载透明背景 PNG');
   });
 
