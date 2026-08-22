@@ -383,6 +383,37 @@
   .bg-side { text-align: center; }
   .bg-label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
   .bg-side img { max-width: 100%; max-height: 180px; border: 1px solid var(--hairline); border-radius: 6px; background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0/20px 20px; }
+
+  /* 专注计时 */
+  .focus-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--hairline-strong); background: #fff; color: var(--ink); font-family: var(--mono); font-size: 13px; font-weight: 600; }
+  .focus-chip .focus-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .focus-chip.running { border-color: var(--accent); color: var(--accent); }
+  .focus-chip.running .focus-dot { background: var(--accent); animation: focus-pulse 1.4s ease-in-out infinite; }
+  @keyframes focus-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+  .focus-tool { flex: 1; overflow: auto; background: var(--paper); padding: 32px 20px 80px; min-height: 0; }
+  .focus-tool[hidden] { display: none !important; }
+  .focus-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1000px; margin: 0 auto; }
+  .focus-card { background: var(--sheet); border-radius: 16px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 16px 44px rgba(27,26,23,.09); padding: 28px 30px; }
+  .focus-big { font-family: var(--font-display); font-size: 58px; font-weight: 600; text-align: center; color: var(--ink); letter-spacing: .01em; margin-bottom: 20px; }
+  .focus-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .focus-switch { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin: 18px 0 6px; cursor: pointer; }
+  .focus-switch input { accent-color: var(--accent); }
+  #focus-alert-wrap { font-size: 13px; color: var(--ink-2); margin-left: 24px; }
+  #focus-alert-wrap input[type="number"] { width: 58px; padding: 4px 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; font-family: var(--font-ui); }
+  .focus-tip { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .focus-today { font-size: 14px; color: var(--ink); margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+  .focus-today b { font-family: var(--font-display); font-size: 20px; }
+  .focus-week { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .focus-list-title { font-family: var(--font-display); font-weight: 600; font-size: 15px; margin-bottom: 12px; }
+  .focus-list { max-height: 420px; overflow-y: auto; }
+  .focus-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 6px; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+  .focus-item .dur { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+  .focus-item .when { color: var(--muted); }
+
+  @media (max-width: 760px) {
+    .focus-wrap { grid-template-columns: 1fr; }
+    .focus-big { font-size: 44px; }
+  }
   .repair-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
   .repair-actions { display: flex; gap: 8px; }
   .repair-actions button { font-size: 12px; padding: 6px 12px; }
@@ -547,6 +578,10 @@
     <button id="btn-translate-settings" class="ghost" data-tip="翻译设置" data-tip-desc="配置翻译引擎（免费 MyMemory / DeepL / LLM）">⚙</button>
     <button id="btn-clean-emoji" class="ghost" data-tip="清理表情" data-tip-desc="一键删除文档里的 emoji 表情和装饰图标（先预览再确认）">清理</button>
     <button id="btn-clear" class="ghost" data-tip="清空" data-tip-desc="清空当前内容">清空</button>
+    <button id="focus-chip" class="focus-chip" data-tip="专注计时" data-tip-desc="开始后实时显示专注时长；点开「专注」面板查看累计">
+      <span class="focus-dot"></span>
+      <span id="focus-chip-time">00:00</span>
+    </button>
   </div>
   <input type="file" id="file-input" accept=".md,.markdown,.txt,text/markdown" hidden>
 </header>
@@ -561,6 +596,7 @@
     <button class="view-tab" id="tab-library" role="tab" aria-selected="false" data-view="library">知识库</button>
     <button class="view-tab" id="tab-wordbook" role="tab" aria-selected="false" data-view="wordbook">单词库</button>
     <button class="view-tab" id="tab-map" role="tab" aria-selected="false" data-view="map">思维导图</button>
+    <button class="view-tab" id="tab-focus" role="tab" aria-selected="false" data-view="focus">专注</button>
   </nav>
 </div>
 
@@ -847,6 +883,33 @@
   <div class="map-panel" id="map-panel">
     <svg id="map-svg"></svg>
     <div class="map-empty" id="map-empty">先在编辑器里打开或粘贴内容，标题将自动生成思维导图</div>
+  </div>
+</section>
+
+<section class="focus-tool" id="focus-tool" hidden>
+  <div class="focus-wrap">
+    <div class="focus-card">
+      <div class="focus-big" id="focus-big">00:00:00</div>
+      <div class="focus-actions">
+        <button id="focus-start" class="primary">开始专注</button>
+        <button id="focus-stop" class="outline">停止并记录</button>
+        <button id="focus-discard" class="ghost">放弃本次</button>
+      </div>
+      <label class="focus-switch">
+        <input type="checkbox" id="focus-alert">
+        <span>到点提醒（可选）</span>
+      </label>
+      <div id="focus-alert-wrap" hidden>
+        <input type="number" id="focus-alert-min" min="1" max="999" value="25" placeholder="25"> 分钟
+        <span class="focus-tip">计时到此时会通知你（需开启浏览器通知权限）</span>
+      </div>
+      <div class="focus-today" id="focus-today"></div>
+      <div class="focus-week" id="focus-week"></div>
+    </div>
+    <div class="focus-card">
+      <div class="focus-list-title">最近记录</div>
+      <div class="focus-list" id="focus-list"></div>
+    </div>
   </div>
 </section>
 
@@ -2590,6 +2653,144 @@
   window.addEventListener('resize', () => { if (mmInstance) mmInstance.fit(); });
   document.getElementById('map-refresh').addEventListener('click', () => { renderMap(); showToast('已重新生成'); });
 
+  // ===== 专注计时器 =====
+  const FOCUS_KEY = 'folio.focus';
+  const focusChip = document.getElementById('focus-chip');
+  const focusChipTime = document.getElementById('focus-chip-time');
+  const focusBig = document.getElementById('focus-big');
+  const focusTool = document.getElementById('focus-tool');
+  let focusElapsed = 0;        // 本次已计时（秒）
+  let focusRunning = false;
+  let focusLastTick = 0;       // 上次计时的时间戳，用于跨刷新恢复
+  function getFocusRecords() { try { return JSON.parse(localStorage.getItem(FOCUS_KEY) || '[]'); } catch (e) { return []; } }
+  function setFocusRecords(l) { localStorage.setItem(FOCUS_KEY, JSON.stringify(l)); }
+  function fmtHMS(sec) {
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+  function fmtHM(sec) { return Math.round(sec / 60) + ' 分钟'; }
+  function updateFocusChip() {
+    focusChipTime.textContent = fmtHMS(focusElapsed).slice(3); // MM:SS
+    focusChip.classList.toggle('running', focusRunning);
+    focusBig.textContent = fmtHMS(focusElapsed);
+  }
+  let focusInterval = null;
+  function startFocus() {
+    if (focusRunning) return;
+    focusRunning = true;
+    focusLastTick = Date.now();
+    focusElapsed = focusLastTick - (focusState.lastStarted || Date.now()) || 0;
+    focusState.lastStarted = Date.now() - focusElapsed * 1000;
+    focusInterval = setInterval(() => {
+      focusElapsed = Math.floor((Date.now() - focusState.lastStarted) / 1000);
+      updateFocusChip();
+      maybeAlert();
+    }, 1000);
+    updateFocusChip();
+    showToast('已开始专注（只记录不打扰）');
+  }
+  function stopFocus() {
+    if (!focusRunning) { showToast('当前没有进行中的专注'); return; }
+    focusRunning = false;
+    clearInterval(focusInterval);
+    if (focusElapsed >= 5) {
+      const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seconds: Math.floor(focusElapsed), at: Date.now() };
+      const records = getFocusRecords();
+      records.unshift(rec);
+      setFocusRecords(records.slice(0, 500));
+      renderFocus();
+      showToast('已记录专注 ' + fmtHM(rec.seconds));
+    } else {
+      showToast('本次不足 5 秒，未记录');
+    }
+    focusElapsed = 0;
+    focusState.lastStarted = null;
+    updateFocusChip();
+  }
+  function discardFocus() {
+    if (!focusRunning) { showToast('当前没有进行中的专注'); return; }
+    focusRunning = false;
+    clearInterval(focusInterval);
+    focusElapsed = 0;
+    focusState.lastStarted = null;
+    updateFocusChip();
+    showToast('已放弃本次专注');
+  }
+  function maybeAlert() {
+    const on = document.getElementById('focus-alert').checked;
+    if (!on || !focusState.lastStarted) return;
+    const min = Number(document.getElementById('focus-alert-min').value) || 25;
+    if (focusElapsed === min * 60 && Notification.permission === 'granted') {
+      new Notification('Folio 专注提醒', { body: '已专注 ' + min + ' 分钟，休息一下吧～' });
+    }
+  }
+  function renderFocus() {
+    // 汇总（今天 / 本周）
+    const records = getFocusRecords();
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const dayStart = startOfDay.getTime();
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const monday = new Date(day); const dow = (monday.getDay() + 6) % 7; monday.setDate(monday.getDate() - dow);
+    const weekStart = monday.getTime();
+    let todaySec = 0, weekSec = 0;
+    records.forEach(r => { if (r.at >= dayStart) todaySec += r.seconds; if (r.at >= weekStart) weekSec += r.seconds; });
+    document.getElementById('focus-today').innerHTML = '今天已专注 <b>' + fmtHM(todaySec) + '</b>';
+    document.getElementById('focus-week').textContent = '本周累计 ' + fmtHM(weekSec) + ' · 共 ' + records.length + ' 次';
+    // 记录列表
+    const list = document.getElementById('focus-list');
+    if (!records.length) { list.innerHTML = '<div class="focus-item" style="justify-content:center;color:var(--muted)">还没有专注记录</div>'; return; }
+    list.innerHTML = records.slice(0, 50).map(r =>
+      '<div class="focus-item"><span class="dur">' + fmtHMS(r.seconds).slice(3) + '</span><span class="when">' + new Date(r.at).toLocaleString('zh-CN', { hour12: false }) + '</span></div>'
+    ).join('');
+  }
+  let focusState = { lastStarted: null };
+  // 刷新后恢复计时（若上次未停止且未超时）
+  try {
+    const savedFocus = JSON.parse(localStorage.getItem('folio.focus.state') || 'null');
+    if (savedFocus && savedFocus.lastStarted) {
+      focusState.lastStarted = savedFocus.lastStarted;
+      // 若页面关闭超 12 小时则视为丢弃
+      if (Date.now() - focusState.lastStarted > 12 * 3600 * 1000) {
+        focusState.lastStarted = null;
+      } else {
+        focusElapsed = Math.floor((Date.now() - focusState.lastStarted) / 1000);
+        startFocus();
+        updateFocusChip();
+      }
+    }
+  } catch (e) {}
+  // 退出自动停止并记录（beforeunload 时把进行中的专注记录下来）
+  window.addEventListener('beforeunload', () => {
+    if (focusRunning && focusState.lastStarted) {
+      focusRunning = false;
+      clearInterval(focusInterval);
+      const sec = Math.floor((Date.now() - focusState.lastStarted) / 1000);
+      if (sec >= 5) {
+        const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seconds: sec, at: Date.now() };
+        const records = getFocusRecords(); records.unshift(rec); setFocusRecords(records.slice(0, 500));
+      }
+      focusState.lastStarted = null;
+      localStorage.removeItem('folio.focus.state');
+    }
+  });
+  // 定时把进行中的状态写回 localStorage，供刷新恢复
+  setInterval(() => {
+    if (focusRunning && focusState.lastStarted) {
+      localStorage.setItem('folio.focus.state', JSON.stringify({ lastStarted: focusState.lastStarted }));
+    }
+  }, 5000);
+
+  document.getElementById('focus-start').addEventListener('click', startFocus);
+  document.getElementById('focus-stop').addEventListener('click', stopFocus);
+  document.getElementById('focus-discard').addEventListener('click', discardFocus);
+  document.getElementById('focus-alert').addEventListener('change', async (e) => {
+    document.getElementById('focus-alert-wrap').hidden = !e.target.checked;
+    if (e.target.checked) {
+      if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
+    }
+  });
+  focusChip.addEventListener('click', () => setView('focus'));
+
   // toast 提示
   const toast = document.getElementById('toast');
   let toastTimer;
@@ -2648,6 +2849,7 @@
     libraryTool.hidden = (v !== 'library');
     wordbookTool.hidden = (v !== 'wordbook');
     mapTool.hidden = (v !== 'map');
+    focusTool.hidden = (v !== 'focus');
     if (isEditor) updateStatus();
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
@@ -2655,7 +2857,8 @@
     else if (v === 'repair') status.textContent = '文档修复 · 乱码 / 文字提取';
     else if (v === 'library') { renderLibrary(); status.textContent = '知识库 · 分类 / 长期保存'; }
     else if (v === 'wordbook') { renderWords(); status.textContent = '单词库 · 划词积累 / 复习'; }
-    else { renderMap(); status.textContent = '思维导图 · 由当前文档自动生成'; }
+    else if (v === 'map') { renderMap(); status.textContent = '思维导图 · 由当前文档自动生成'; }
+    else { renderFocus(); status.textContent = '专注 · 计时 / 累计'; }
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
