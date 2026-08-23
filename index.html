@@ -412,12 +412,35 @@
   .split-tool[hidden] { display: none !important; }
   .split-wrap { display: flex; width: 100%; height: 100%; }
   .split-col { display: flex; flex-direction: column; min-height: 0; flex: 1 1 50%; }
-  .split-col-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--hairline); background: var(--sheet); font-size: 12px; font-weight: 600; color: var(--muted); }
-  .split-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .editor.split-editor { flex: 1 1 auto; flex-shrink: 1; overflow: auto; padding: 42px 40px; min-height: 0; max-width: none; width: 100%; border-radius: 0; box-shadow: none; margin: 0; }
+  .split-col-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 18px; border-bottom: 1px solid var(--hairline); background: var(--sheet); font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .split-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display); font-size: 13.5px; color: var(--ink); }
+  .split-head-badge { flex: 0 0 auto; font-size: 10px; font-weight: 600; letter-spacing: .02em; color: var(--muted); background: var(--paper); border: 1px solid var(--hairline); border-radius: 999px; padding: 2px 8px; }
+  .editor.split-editor { flex: 1 1 auto; flex-shrink: 1; overflow: auto; padding: 42px 40px; min-height: 0; max-width: none; width: 100%; border-radius: 0; box-shadow: none; margin: 0; scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
+  .editor.split-editor::-webkit-scrollbar { width: 8px; }
+  .editor.split-editor::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 4px; }
   .editor.split-editor:empty::before { content: ''; }
-  .split-bar { flex: 0 0 6px; cursor: col-resize; background: rgba(27,26,23,.08); transition: background .18s var(--ease); }
-  .split-bar:hover, .split-bar.dragging { background: var(--accent); }
+  /* 拖拽条：细发丝 + 中央圆形抓握手柄，hover 浮现、拖拽放大发光 */
+  .split-bar {
+    position: relative; flex: 0 0 20px; cursor: col-resize; user-select: none;
+    background: transparent; touch-action: none;
+  }
+  .split-bar::before {
+    content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+    transform: translateX(-50%);
+    background: var(--hairline-strong); transition: width .18s var(--ease), background .18s var(--ease);
+  }
+  .split-bar::after {
+    content: ''; position: absolute; left: 50%; top: 50%; width: 9px; height: 34px;
+    transform: translate(-50%, -50%); border-radius: 999px;
+    background: var(--sheet); border: 1px solid var(--hairline-strong);
+    box-shadow: 0 1px 3px rgba(27,26,23,.10);
+    background-image: repeating-linear-gradient(180deg, var(--hairline-strong) 0 1px, transparent 1px 9px);
+    background-position: center; background-size: 2px 8px; background-repeat: no-repeat;
+    opacity: .3; transition: opacity .18s var(--ease), width .18s var(--ease), height .18s var(--ease), background-color .18s var(--ease);
+  }
+  .split-bar:hover::before, .split-bar.dragging::before { width: 2px; background: var(--accent); }
+  .split-bar:hover::after, .split-bar.dragging::after { opacity: 1; background-color: var(--accent-soft); border-color: var(--accent); }
+  .split-bar.dragging::after { width: 11px; height: 42px; box-shadow: 0 2px 16px rgba(193,18,31,.22); }
   #split-exit { font-size: 12px; padding: 5px 12px; }
   .focus-card { background: var(--sheet); border-radius: 16px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 16px 44px rgba(27,26,23,.09); padding: 28px 30px; }
   .focus-big { font-family: var(--font-display); font-size: 58px; font-weight: 600; text-align: center; color: var(--ink); letter-spacing: .01em; margin-bottom: 20px; }
@@ -962,12 +985,12 @@
 <section class="split-tool" id="split-tool" hidden>
   <div class="split-wrap">
     <div class="split-col split-left">
-      <div class="split-col-head"><span class="split-title" id="split-left-title">左（主文档）</span></div>
+      <div class="split-col-head"><span class="split-head-badge">主</span><span class="split-title" id="split-left-title">左（主文档）</span></div>
       <div class="editor split-editor" id="split-editor1" contenteditable="true" role="textbox" aria-multiline="true" aria-label="主文档编辑器"></div>
     </div>
     <div class="split-bar" id="split-bar" title="拖动调整比例"></div>
     <div class="split-col split-right">
-      <div class="split-col-head"><span class="split-title" id="split-right-title">右（副文档）</span><button id="split-exit" class="outline">退出分屏</button></div>
+      <div class="split-col-head"><span class="split-head-badge">副</span><span class="split-title" id="split-right-title">右（副文档）</span><button id="split-exit" class="outline">退出分屏</button></div>
       <div class="editor split-editor" id="split-editor2" contenteditable="true" role="textbox" aria-multiline="true" aria-label="副文档编辑器"></div>
     </div>
   </div>
