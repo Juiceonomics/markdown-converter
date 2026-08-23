@@ -1808,6 +1808,8 @@
   const splitEditor1 = document.getElementById('split-editor1');
   const splitEditor2 = document.getElementById('split-editor2');
   function enterSplit() {
+    // 若上次分屏未清理，先保存改动，避免覆盖丢失
+    if (splitState.sideId || splitState.mainId) saveSplitEdits();
     const others = docs.filter(d => d.id !== activeDocId);
     if (!others.length) { showToast('需要至少再打开一个文档才能分屏（可用 ＋ 新建或载入）'); return; }
     let side = others[0];
@@ -1816,6 +1818,9 @@
       if (isNaN(n) || n < 1 || n > others.length) { showToast('已取消分屏'); return; }
       side = others[n - 1];
     }
+    // 进入分屏前先把当前编辑器内容存回激活标签，确保分屏主文档是最新内容
+    saveActiveDoc();
+    updateStatus();
     // 主文档 = 当前激活标签
     const mainDoc = docById(activeDocId);
     splitEditor1.innerHTML = mainDoc ? mainDoc.html : '';
@@ -1852,6 +1857,13 @@
     if (d) { d.html = splitEditor2.innerHTML; d.title = docTitleFromHtml(splitEditor2.innerHTML); }
     clearTimeout(splitState.timer);
     splitState.timer = setTimeout(() => saveDocsState(), 800);
+  });
+  // 主窗格编辑也实时回写（避免编辑中刷新/崩溃丢失）
+  splitEditor1.addEventListener('input', () => {
+    const d = docById(splitState.mainId);
+    if (d) { d.html = splitEditor1.innerHTML; d.title = docTitleFromHtml(splitEditor1.innerHTML); }
+    clearTimeout(splitState.timer1);
+    splitState.timer1 = setTimeout(() => saveDocsState(), 800);
   });
   // 拖拽分隔条（用 transform 控制宽度，性能更好）
   function startSplitDrag(e) {
@@ -3164,7 +3176,8 @@
 
   function setView(v) {
     // 从 split 切到其他 view 时，先保存副/主文档改动，避免丢失
-    if (view === 'split' && v !== 'split' && document.getElementById('split-editor1')) {
+    const cameFromSplit = (view === 'split' && v !== 'split' && document.getElementById('split-editor1'));
+    if (cameFromSplit) {
       saveSplitEdits();
     }
     view = v;
@@ -3174,6 +3187,9 @@
     });
     const isEditor = v === 'editor';
     const isSplit = v === 'split';
+    // 分屏时隐藏文档标签栏（隔离分屏状态，避免标签切换破坏分屏）；切回编辑器则恢复
+    const docbarEl = document.getElementById('docbar');
+    if (docbarEl) docbarEl.hidden = isSplit;
     editorActions.style.display = isSplit ? 'none' : (isEditor ? '' : 'none');
     workspaceEl.style.display = isSplit ? 'none' : (isEditor ? '' : 'none');
     toolbar.style.display = isEditor ? (mode === 'source' ? 'none' : 'flex') : 'none';
@@ -3186,7 +3202,14 @@
     mapTool.hidden = (v !== 'map');
     focusTool.hidden = (v !== 'focus');
     splitTool.hidden = (v !== 'split');
-    if (isEditor) updateStatus();
+    if (isEditor) {
+      updateStatus();
+      // 从分屏切回编辑器：刷新 workspace 主编辑器内容（分屏里可能编辑过主文档）
+      if (cameFromSplit) {
+        const m = docById(activeDocId);
+        if (m) { editor.innerHTML = m.html; currentFileBase = m.file || null; renderAllAnnots(); }
+      }
+    }
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
     else if (v === 'pdf') status.textContent = 'PDF 工具 · 合并 / 拆分';
