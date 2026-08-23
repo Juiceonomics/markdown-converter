@@ -1687,6 +1687,11 @@
     const d = docById(activeDocId);
     if (d) { d.html = editor.innerHTML; d.file = currentFileBase; d.title = docTitleFromHtml(editor.innerHTML); }
   }
+  const DOCS_KEY = 'folio.docs';
+  function saveDocsState() {
+    saveActiveDoc();
+    try { localStorage.setItem(DOCS_KEY, JSON.stringify({ docs: docs, activeDocId: activeDocId })); } catch (e) {}
+  }
   function loadDoc(d) {
     saveActiveDoc();
     activeDocId = d.id;
@@ -1696,6 +1701,7 @@
     updateStatus();
     renderAllAnnots();
     renderDocTabs();
+    saveDocsState();
   }
   function openNewDoc(html, file) {
     saveActiveDoc();
@@ -1709,6 +1715,7 @@
     renderAllAnnots();
     renderDocTabs();
     showDocbar();
+    saveDocsState();
   }
   function closeDoc(id) {
     const idx = docs.findIndex(d => d.id === id);
@@ -1727,6 +1734,7 @@
     } else {
       renderDocTabs();
     }
+    saveDocsState();
   }
   function showDocbar() { docbar.hidden = false; }
   function hideDocbar() { docbar.hidden = true; }
@@ -1828,7 +1836,7 @@
   let draftTimer;
   function scheduleDraftSave() {
     clearTimeout(draftTimer);
-    draftTimer = setTimeout(() => { saveDraft(); takeSnapshot(); }, 800);
+    draftTimer = setTimeout(() => { saveDraft(); takeSnapshot(); saveDocsState(); }, 800);
   }
   editor.addEventListener('input', scheduleDraftSave);
   source.addEventListener('input', scheduleDraftSave);
@@ -4302,14 +4310,34 @@ $$\\text{MOS (%)} = \\frac{10,000 - 6,250}{10,000} = 37.5%$$
 
 更多信息请访问 [示例链接](https://example.com)。`;
 
-  restoreDraft();
-  // 把启动时的编辑器内容登记为第一个文档标签
-  if (!docs.length) {
-    docs.push({ id: genId(), html: editor.innerHTML, file: currentFileBase, title: docTitleFromHtml(editor.innerHTML) });
-    activeDocId = docs[0].id;
+  // 启动：优先恢复持久化的多标签；没有则恢复单草稿作为第一个标签
+  let restored = false;
+  try {
+    const saved = JSON.parse(localStorage.getItem(DOCS_KEY) || 'null');
+    if (saved && Array.isArray(saved.docs) && saved.docs.length) {
+      docs = saved.docs;
+      activeDocId = saved.activeDocId && docById(saved.activeDocId) ? saved.activeDocId : docs[0].id;
+      const d = docById(activeDocId);
+      if (d) {
+        editor.innerHTML = d.html;
+        currentFileBase = d.file || null;
+      }
+      showDocbar();
+      renderDocTabs();
+      updateStatus();
+      if (docs.length > 1) showToast('已恢复 ' + docs.length + ' 个标签');
+      restored = true;
+    }
+  } catch (e) {}
+  if (!restored) {
+    restoreDraft();
+    if (!docs.length) {
+      docs.push({ id: genId(), html: editor.innerHTML, file: currentFileBase, title: docTitleFromHtml(editor.innerHTML) });
+      activeDocId = docs[0].id;
+    }
+    renderDocTabs();
+    updateStatus();
   }
-  renderDocTabs();
-  updateStatus();
 </script>
 </body>
 </html>
