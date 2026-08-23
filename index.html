@@ -999,6 +999,7 @@
   <div class="sel-actions">
     <button id="sel-translate" class="primary">翻译</button>
     <button id="sel-save">存入单词库</button>
+    <button id="sel-this-off">关闭本次</button>
   </div>
   <div class="sel-result" id="sel-result" hidden>
     <div class="sel-result-text" id="sel-result-text"></div>
@@ -1053,6 +1054,11 @@
         <label class="lib-field-label">模型</label>
         <input type="text" class="lib-text-input" id="ts-llm-model" placeholder="如 deepseek-chat / gpt-4o-mini">
       </div>
+      <label class="focus-switch" style="margin-top:18px">
+        <input type="checkbox" id="ts-sel-off">
+        <span>此文档内不开启划词翻译</span>
+      </label>
+      <div class="focus-tip">开启后，在当前文档里选中文字不会弹翻译框（可用「划词栏 → 关闭本次」临时关闭一次）。</div>
     </div>
     <div class="modal-foot">
       <button id="ts-save" class="primary">保存</button>
@@ -2236,7 +2242,26 @@
     selBar.style.top = top + 'px';
     selBar.style.left = left + 'px';
   }
+  // 划词翻译开关：本次关闭 + 此文档内关闭（记忆到本地）
+  let selOffThisDoc = false; // 此文档内关闭（每开一个文档默认重置？不，按文档记忆）
+  const SEL_OFF_KEY = 'folio.selOff';
+  function getSelOff() { try { return JSON.parse(localStorage.getItem(SEL_OFF_KEY) || '[]'); } catch (e) { return []; } }
+  function setSelOff(list) { localStorage.setItem(SEL_OFF_KEY, JSON.stringify(list)); }
+  const isSelOffForCurrent = () => currentFileBase && getSelOff().includes(currentFileBase);
+
+  // 「关闭本次」：本次会话内一直关闭划词栏（不记忆）
+  let selOffSession = false;
+  function hideSelBar() { selBar.hidden = true; document.getElementById('sel-result').hidden = true; selText = ''; selTransOk = false; }
+  function positionSelBar(range) {
+    const r = range.getBoundingClientRect();
+    let top = r.bottom + 8, left = r.left;
+    if (top + selBar.offsetHeight > window.innerHeight - 8) top = r.top - selBar.offsetHeight - 8;
+    left = Math.max(8, Math.min(left, window.innerWidth - selBar.offsetWidth - 8));
+    selBar.style.top = top + 'px';
+    selBar.style.left = left + 'px';
+  }
   function showSelBar(range, text) {
+    if (selOffSession || isSelOffForCurrent()) return; // 被关闭时不弹
     selText = text.trim();
     if (!selText) return;
     selSeq++;
@@ -2258,6 +2283,12 @@
   });
   document.addEventListener('scroll', hideSelBar, true);
   document.getElementById('sel-close').addEventListener('click', hideSelBar);
+  // 「关闭本次」：本次会话关闭，下次正常
+  document.getElementById('sel-this-off').addEventListener('click', () => {
+    selOffSession = true;
+    hideSelBar();
+    showToast('已关闭本次划词翻译（刷新页面后恢复）');
+  });
 
   document.getElementById('sel-translate').addEventListener('click', async () => {
     if (!selText) return;
@@ -2415,6 +2446,7 @@
     document.getElementById('ts-llm-key').value = cfg.llmKey || '';
     document.getElementById('ts-llm-url').value = cfg.llmBaseUrl || '';
     document.getElementById('ts-llm-model').value = cfg.llmModel || '';
+    document.getElementById('ts-sel-off').checked = !!currentFileBase && isSelOffForCurrent();
     syncTsFields();
     tsModal.hidden = false;
   });
@@ -2429,6 +2461,16 @@
       llmBaseUrl: document.getElementById('ts-llm-url').value.trim(),
       llmModel: document.getElementById('ts-llm-model').value.trim()
     });
+    // 保存「此文档内关闭划词」状态（按文件名记忆）
+    const selOff = getSelOff();
+    const offNow = document.getElementById('ts-sel-off').checked;
+    const key = currentFileBase;
+    if (key) {
+      if (offNow && !selOff.includes(key)) selOff.push(key);
+      if (!offNow) { const i = selOff.indexOf(key); if (i > -1) selOff.splice(i, 1); }
+      setSelOff(selOff);
+      hideSelBar();
+    }
     tsModal.hidden = true;
     showToast('翻译设置已保存');
   });
