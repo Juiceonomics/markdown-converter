@@ -451,6 +451,14 @@
   .lib-cat-manage { margin-top: 6px; font-size: 12.5px; color: var(--ink-2); background: transparent; border: none; cursor: pointer; text-align: left; padding: 8px 12px; border-radius: 8px; }
   .lib-cat-manage:hover { background: #F3F0E9; color: var(--ink); }
   .lib-main { flex: 1; min-width: 0; background: var(--sheet); border-radius: 14px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 14px 36px rgba(27,26,23,.08); display: flex; flex-direction: column; min-height: 0; }
+  .lib-batch { display: flex; gap: 8px; align-items: center; }
+  .lib-batch[hidden] { display: none; }
+  .lib-batch button { font-size: 12px; padding: 5px 10px; }
+  .lib-batch select { font-family: var(--font-ui); font-size: 12px; padding: 5px 6px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: #fff; }
+  .lib-check { margin-right: 2px; flex: 0 0 auto; }
+  .lib-check input { accent-color: var(--accent); cursor: pointer; }
+  .lib-doc.selected { background: var(--accent-soft); }
+  .lib-doc.selected .acts { opacity: .4; pointer-events: none; }
   .lib-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
   .lib-toolbar input { flex: 1; font-family: var(--font-ui); font-size: 13px; padding: 7px 12px; border: 1px solid var(--hairline-strong); border-radius: 8px; }
   .lib-count { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
@@ -874,6 +882,12 @@
       <div class="lib-toolbar">
         <input type="search" id="lib-search" placeholder="搜索标题 / 内容…" aria-label="搜索知识库">
         <span class="lib-count" id="lib-count"></span>
+        <span class="lib-batch" id="lib-batch" hidden>
+          <button id="lib-batch-del">批量删除</button>
+          <button id="lib-batch-export">批量导出 ZIP</button>
+          <select id="lib-batch-cat"><option value="">移动到分类…</option></select>
+          <button id="lib-batch-cancel">取消</button>
+        </span>
       </div>
       <div class="lib-list" id="lib-list"></div>
     </div>
@@ -2086,6 +2100,11 @@
       const cnt = docs.filter(d => d.category === c).length;
       return '<button class="lib-cat' + (libFilter === c ? ' active' : '') + '" data-cat="' + escapeHtml(c) + '">' + escapeHtml(c) + ' <span class="lib-cat-count">' + cnt + '</span></button>';
     }).join('');
+    // 同步填充批量分类下拉
+    const sel = document.getElementById('lib-batch-cat');
+    if (sel) {
+      sel.innerHTML = '<option value="">移动到分类…</option>' + cats.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('') + '<option value="__none__">未分类</option>';
+    }
   }
   function renderLibrary() {
     renderLibCats();
@@ -2107,7 +2126,8 @@
       return;
     }
     libList.innerHTML = docs.map(d =>
-      '<div class="lib-doc">' +
+      '<div class="lib-doc" data-id="' + d.id + '">' +
+        '<label class="lib-check"><input type="checkbox" class="lib-chk" value="' + d.id + '"></label>' +
         '<div class="main">' +
           '<div class="title">' + escapeHtml(d.title || '未命名') + '</div>' +
           '<div class="meta">' + escapeHtml(d.category || '未分类') + ' · ' + new Date(d.updatedAt || d.savedAt).toLocaleString('zh-CN', { hour12: false }) + '</div>' +
@@ -2163,6 +2183,60 @@
         showToast('已删除');
       }
     }
+  });
+
+  // ===== 批量操作 =====
+  const libBatch = document.getElementById('lib-batch');
+  function getSelectedIds() {
+    return Array.from(libList.querySelectorAll('.lib-chk:checked')).map(c => c.value);
+  }
+  function refreshBatchBar() {
+    const sel = getSelectedIds();
+    libBatch.hidden = sel.length === 0;
+    // 高亮选中项
+    libList.querySelectorAll('.lib-chk').forEach(chk => {
+      const row = chk.closest('.lib-doc');
+      if (row) row.classList.toggle('selected', chk.checked);
+    });
+  }
+  libList.addEventListener('change', (e) => {
+    if (e.target.classList.contains('lib-chk')) refreshBatchBar();
+  });
+  document.getElementById('lib-batch-del').addEventListener('click', async () => {
+    const ids = getSelectedIds();
+    if (!ids.length) return;
+    if (await confirmDialog('确定删除选中的 ' + ids.length + ' 篇文档？')) {
+      setLibrary(getLibrary().filter(x => !ids.includes(x.id)));
+      renderLibrary();
+      showToast('已删除 ' + ids.length + ' 篇');
+    }
+  });
+  document.getElementById('lib-batch-export').addEventListener('click', async () => {
+    const ids = getSelectedIds();
+    if (!ids.length) return;
+    const docs = getLibrary().filter(x => ids.includes(x.id));
+    const entries = {};
+    docs.forEach(d => {
+      entries[(d.category ? d.category + '/' : '') + (d.title || '未命名') + '.html'] = new TextEncoder().encode(d.html);
+    });
+    const out = fflate.zipSync(entries);
+    downloadBlob(new Blob([out], { type: 'application/zip' }), '知识库导出.zip');
+    showToast('已导出 ' + docs.length + ' 篇（' + Object.keys(entries).length + ' 个文件）');
+  });
+  document.getElementById('lib-batch-cat').addEventListener('change', async (e) => {
+    const target = e.target.value;
+    if (!target) return;
+    const ids = getSelectedIds();
+    const docs = getLibrary();
+    docs.forEach(d => { if (ids.includes(d.id)) d.category = target === '__none__' ? '' : target; });
+    setLibrary(docs);
+    renderLibrary();
+    showToast('已移动 ' + ids.length + ' 篇到「' + (target === '__none__' ? '未分类' : target) + '」');
+    e.target.value = '';
+  });
+  document.getElementById('lib-batch-cancel').addEventListener('click', () => {
+    libList.querySelectorAll('.lib-chk').forEach(c => c.checked = false);
+    refreshBatchBar();
   });
 
   // 存入知识库
