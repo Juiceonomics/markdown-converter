@@ -161,6 +161,19 @@
   .pop-actions .cancel { background: transparent; }
 
   /* 工作区（导航 + 编辑器 + 批注侧栏） */
+  /* 文档标签条 */
+  .docbar { display: flex; align-items: center; gap: 4px; padding: 0 28px; background: var(--sheet); border-bottom: 1px solid var(--hairline); flex: 0 0 auto; }
+  .docbar[hidden] { display: none; }
+  .doc-tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; scrollbar-width: thin; }
+  .doc-tab { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 13px; color: var(--ink-2); border: none; background: transparent; border-radius: 8px 8px 0 0; cursor: pointer; white-space: nowrap; max-width: 180px; }
+  .doc-tab:hover { background: #F3F0E9; }
+  .doc-tab.active { background: var(--paper); color: var(--ink); font-weight: 600; border-bottom: 2px solid var(--accent); }
+  .doc-tab .name { overflow: hidden; text-overflow: ellipsis; }
+  .doc-tab .x { font-size: 14px; color: var(--muted); padding: 0 2px; border-radius: 4px; }
+  .doc-tab .x:hover { color: var(--ink); background: var(--hairline); }
+  #doc-new { padding: 6px 10px; font-size: 16px; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 8px; }
+  #doc-new:hover { background: #F3F0E9; color: var(--ink); }
+
   .workspace { flex: 1; display: flex; min-height: 0; }
   .nav-pane { width: 220px; flex: 0 0 auto; background: var(--sheet); border-right: 1px solid var(--hairline); display: flex; flex-direction: column; min-height: 0; }
   .nav-pane[hidden] { display: none !important; }
@@ -693,6 +706,11 @@
   <span class="sep"></span>
   <button data-cmd="undo" data-tip="撤销" data-tip-desc="撤销上一步操作（Ctrl+Z）">↩</button>
   <button data-cmd="redo" data-tip="重做" data-tip-desc="重做（Ctrl+Y）">↪</button>
+</div>
+
+<div class="docbar" id="docbar" hidden>
+  <div class="doc-tabs" id="doc-tabs"></div>
+  <button id="doc-new" title="新建文档">＋</button>
 </div>
 
 <div class="workspace" id="workspace">
@@ -1637,16 +1655,100 @@
   }
   btnSource.addEventListener('click', () => setMode(mode === 'wysiwyg' ? 'source' : 'wysiwyg'));
 
-  let currentFileBase = null; // 导入文件的原名（去扩展名），导出时默认用它
+  let currentFileBase = null; // 当前标签的文件名（去扩展名）
+  // ===== 多标签文档 =====
+  const docbar = document.getElementById('docbar');
+  const docTabs = document.getElementById('doc-tabs');
+  let docs = [];                        // [{ id, html, file, title }]
+  let activeDocId = null;
+  function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function docById(id) { return docs.find(d => d.id === id); }
+  function docTitleFromHtml(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const h = tmp.querySelector('h1');
+    return (h && h.textContent.trim()) ? h.textContent.trim().slice(0, 30) : '未命名文档';
+  }
+  function saveActiveDoc() {
+    const d = docById(activeDocId);
+    if (d) { d.html = editor.innerHTML; d.file = currentFileBase; d.title = docTitleFromHtml(editor.innerHTML); }
+  }
+  function loadDoc(d) {
+    saveActiveDoc();
+    activeDocId = d.id;
+    if (mode === 'source') setMode('wysiwyg');
+    editor.innerHTML = d.html;
+    currentFileBase = d.file || null;
+    updateStatus();
+    renderAllAnnots();
+    renderDocTabs();
+  }
+  function openNewDoc(html, file) {
+    saveActiveDoc();
+    const d = { id: genId(), html: html, file: file || null, title: docTitleFromHtml(html) };
+    docs.push(d);
+    activeDocId = d.id;
+    if (mode === 'source') setMode('wysiwyg');
+    editor.innerHTML = html;
+    currentFileBase = d.file;
+    updateStatus();
+    renderAllAnnots();
+    renderDocTabs();
+    showDocbar();
+  }
+  function closeDoc(id) {
+    const idx = docs.findIndex(d => d.id === id);
+    if (idx === -1) return;
+    const wasActive = id === activeDocId;
+    docs.splice(idx, 1);
+    if (docs.length === 0) {
+      // 关掉最后一个：残留空白文档
+      activeDocId = null;
+      editor.innerHTML = '';
+      currentFileBase = null;
+      hideDocbar();
+    } else if (wasActive) {
+      const next = docs[Math.min(idx, docs.length - 1)];
+      loadDoc(next);
+    } else {
+      renderDocTabs();
+    }
+  }
+  function showDocbar() { docbar.hidden = false; }
+  function hideDocbar() { docbar.hidden = true; }
+  function renderDocTabs() {
+    docTabs.innerHTML = '';
+    docs.forEach(d => {
+      const t = document.createElement('button');
+      t.className = 'doc-tab' + (d.id === activeDocId ? ' active' : '');
+      t.setAttribute('data-id', d.id);
+      t.innerHTML = '<span class="name">' + escapeHtml(d.title || '未命名文档') + '</span><span class="x" data-act="close">×</span>';
+      docTabs.appendChild(t);
+    });
+  }
+  docTabs.addEventListener('click', (e) => {
+    const x = e.target.closest('[data-act="close"]');
+    const tab = e.target.closest('.doc-tab');
+    if (!tab) return;
+    const id = tab.getAttribute('data-id');
+    if (x) closeDoc(id);
+    else {
+      const d = docById(id);
+      if (d && d.id !== activeDocId) loadDoc(d);
+    }
+  });
+  document.getElementById('doc-new').addEventListener('click', () => {
+    openNewDoc('', null);
+    editor.focus();
+  });
+
   function openFile(f) {
-    currentFileBase = (f.name || '').replace(/\.[^.]+$/, '') || null;
+    const file = (f.name || '').replace(/\.[^.]+$/, '') || null;
     const reader = new FileReader();
     reader.onload = () => {
+      openNewDoc(mdToHtml(reader.result), file);
       if (mode === 'source') setMode('wysiwyg');
-      editor.innerHTML = mdToHtml(reader.result);
-      updateStatus();
       saveDraft();
-      renderAllAnnots();
     };
     reader.readAsText(f, 'utf-8');
   }
@@ -1675,11 +1777,7 @@
   });
 
   document.getElementById('btn-sample').addEventListener('click', () => {
-    if (mode === 'source') setMode('wysiwyg');
-    currentFileBase = null;
-    editor.innerHTML = mdToHtml(SAMPLE);
-    updateStatus();
-    renderAllAnnots();
+    openNewDoc(mdToHtml(SAMPLE), null);
   });
 
   document.getElementById('btn-clear').addEventListener('click', () => {
@@ -2024,21 +2122,13 @@
     ).join('');
   }
   function loadLibraryDocToEditor(doc) {
-    editor.innerHTML = doc.html;
-    // 打开知识库文档：把文件名记忆设为文档标题（以此命名导出），但不破坏「从文件导入」的原文件名
-    if (doc.title) currentFileBase = (doc.title || '').replace(/[\\/:*?"<>|]/g, '') || null;
-    if (mode === 'source') setMode('wysiwyg');
-    updateStatus();
-    renderAllAnnots();
+    // 打开知识库文档放进新标签（不再覆盖当前文档，多标签并存）
+    const file = (doc.title || '').replace(/[\\/:*?"<>|]/g, '') || null;
+    openNewDoc(doc.html, file);
     saveDraft();
   }
-  // 打开文档前：若当前编辑器有内容（且非该文档本身），先确认，避免覆盖丢工作
-  async function openLibraryDoc(doc) {
-    const currentMine = currentFileBase && currentFileBase === (doc.title || '').replace(/[\\/:*?"<>|]/g, '');
-    if (!contentEmpty() && !currentMine) {
-      const ok = await confirmDialog('当前编辑器里有内容，打开「' + (doc.title || '未命名') + '」将覆盖它。\n\n（当前内容仍会保留在草稿 / 版本快照里）');
-      if (!ok) return false;
-    }
+  // 打开知识库文档：开新标签，不覆盖当前文档（当前文档保留在其标签里）
+  function openLibraryDoc(doc) {
     loadLibraryDocToEditor(doc);
     setView('editor');
     showToast('已打开：' + (doc.title || '未命名'));
@@ -2532,18 +2622,13 @@
   document.getElementById('paste-close').addEventListener('click', () => { pasteModal.hidden = true; });
   document.getElementById('paste-cancel').addEventListener('click', () => { pasteModal.hidden = true; });
   pasteModal.addEventListener('mousedown', (e) => { if (e.target === pasteModal) pasteModal.hidden = true; });
-  document.getElementById('paste-confirm').addEventListener('click', async () => {
+  document.getElementById('paste-confirm').addEventListener('click', () => {
     const text = pasteInput.value.trim();
     if (!text) { showToast('请输入 Markdown 内容'); return; }
-    if (!contentEmpty() && !(await confirmDialog('将替换当前内容，确定载入？'))) return;
-    if (mode === 'source') setMode('wysiwyg');
-    currentFileBase = null; // 是文本不是文件，导出默认名退回文档标题
-    editor.innerHTML = mdToHtml(text);
-    updateStatus();
-    renderAllAnnots();
+    openNewDoc(mdToHtml(text), null); // 开新标签，不覆盖当前文档
     saveDraft();
     pasteModal.hidden = true;
-    showToast('已载入 Markdown 文本');
+    showToast('已载入 Markdown 文本（新标签）');
   });
   document.addEventListener('keydown', (e) => { if (!pasteModal.hidden && e.key === 'Escape') pasteModal.hidden = true; });
 
@@ -4144,6 +4229,12 @@ $$\\text{MOS (%)} = \\frac{10,000 - 6,250}{10,000} = 37.5%$$
 更多信息请访问 [示例链接](https://example.com)。`;
 
   restoreDraft();
+  // 把启动时的编辑器内容登记为第一个文档标签
+  if (!docs.length) {
+    docs.push({ id: genId(), html: editor.innerHTML, file: currentFileBase, title: docTitleFromHtml(editor.innerHTML) });
+    activeDocId = docs[0].id;
+  }
+  renderDocTabs();
   updateStatus();
 </script>
 </body>
