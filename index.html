@@ -990,7 +990,7 @@
     </div>
     <div class="split-bar" id="split-bar" title="拖动调整比例"></div>
     <div class="split-col split-right">
-      <div class="split-col-head"><span class="split-head-badge">副</span><span class="split-title" id="split-right-title">右（副文档）</span><button id="split-exit" class="outline">退出分屏</button></div>
+      <div class="split-col-head"><span class="split-head-badge">副</span><span class="split-title" id="split-right-title">右（副文档）</span><button id="split-swap" class="outline" title="互换主副文档">⇄ 互换</button><button id="split-exit" class="outline">退出分屏</button></div>
       <div class="editor split-editor" id="split-editor2" contenteditable="true" role="textbox" aria-multiline="true" aria-label="副文档编辑器"></div>
     </div>
   </div>
@@ -1874,6 +1874,30 @@
     const m = docById(activeDocId);
     if (m) { editor.innerHTML = m.html; currentFileBase = m.file; updateStatus(); renderAllAnnots(); }
   }
+  // 主副互换：两侧内容对调，docId 同步对调，主编辑器跟随新主文档
+  function swapSplit() {
+    const mainDoc = docById(splitState.mainId);
+    const sideDoc = docById(splitState.sideId);
+    if (!mainDoc || !sideDoc) return;
+    const mainHtml = splitEditor1.innerHTML;
+    const sideHtml = splitEditor2.innerHTML;
+    saveSplitEdits(); // 先把当前两侧改动存好
+    // 对调 docId 与内容
+    splitState.mainId = sideDoc.id;
+    splitState.sideId = mainDoc.id;
+    splitEditor1.innerHTML = sideHtml;
+    splitEditor2.innerHTML = mainHtml;
+    // 主编辑器当前激活文档 = 新的主文档
+    activeDocId = sideDoc.id;
+    currentFileBase = sideDoc.file || null;
+    document.getElementById('split-left-title').textContent = '左（主）' + (sideDoc.title ? '：' + sideDoc.title : '');
+    document.getElementById('split-right-title').textContent = '右（副）' + (mainDoc.title ? '：' + mainDoc.title : '');
+    renderDocTabs();
+    saveDocsState();
+    showToast('已互换主副文档');
+  }
+  document.getElementById('split-swap').addEventListener('click', swapSplit);
+
   const splitState = { mainId: null, sideId: null };
   splitEditor2.addEventListener('input', () => {
     const d = docById(splitState.sideId);
