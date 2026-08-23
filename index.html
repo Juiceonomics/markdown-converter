@@ -1014,7 +1014,7 @@
     </div>
     <div class="modal-body">
       <textarea class="repair-input" id="paste-input" placeholder="在这里粘贴 Markdown 文本…" style="min-height:220px"></textarea>
-      <div style="font-size:12px;color:var(--muted);">点「载入」会用这段文本替换当前编辑器内容（当前内容仍保留在草稿 / 版本快照里）。</div>
+      <div style="font-size:12px;color:var(--muted);">点「载入」会用这段文本**新建一个标签**，不影响当前文档。</div>
     </div>
     <div class="modal-foot">
       <button id="paste-confirm" class="primary">载入</button>
@@ -1673,6 +1673,8 @@
   // ===== 多标签文档 =====
   const docbar = document.getElementById('docbar');
   const docTabs = document.getElementById('doc-tabs');
+  docTabs.setAttribute('role', 'tablist');
+  docTabs.setAttribute('aria-label', '文档标签');
   let docs = [];                        // [{ id, html, file, title }]
   let activeDocId = null;
   function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -1685,7 +1687,12 @@
   }
   function saveActiveDoc() {
     const d = docById(activeDocId);
-    if (d) { d.html = editor.innerHTML; d.file = currentFileBase; d.title = docTitleFromHtml(editor.innerHTML); }
+    if (!d) return;
+    // 用 getExportHtml()：源码模式下 content 在 source.value，这样不会丢失源码编辑
+    const html = getExportHtml();
+    d.html = html;
+    d.file = currentFileBase;
+    d.title = docTitleFromHtml(html);
   }
   const DOCS_KEY = 'folio.docs';
   function saveDocsState() {
@@ -1744,6 +1751,9 @@
       const t = document.createElement('button');
       t.className = 'doc-tab' + (d.id === activeDocId ? ' active' : '');
       t.setAttribute('data-id', d.id);
+      t.setAttribute('role', 'tab');
+      t.setAttribute('aria-selected', String(d.id === activeDocId));
+      t.setAttribute('title', d.title || '未命名文档');
       t.innerHTML = '<span class="name">' + escapeHtml(d.title || '未命名文档') + '</span><span class="x" data-act="close">×</span>';
       docTabs.appendChild(t);
     });
@@ -1807,6 +1817,10 @@
     source.value = '';
     currentFileBase = null;
     localStorage.removeItem('folio.draft');
+    // 同步当前标签并持久化，避免刷新后内容"复活"
+    const d = docById(activeDocId);
+    if (d) { d.html = ''; d.file = null; d.title = '未命名文档'; }
+    saveDocsState();
     updateStatus();
     renderAllAnnots();
   });
@@ -2061,6 +2075,10 @@
       if (s) {
         editor.innerHTML = s.html;
         currentFileBase = s.file || null;
+        // 恢复快照后同步当前标签并持久化，避免标签内容/文件名滞后
+        const d = docById(activeDocId);
+        if (d) { d.html = s.html; d.file = s.file || null; d.title = docTitleFromHtml(s.html); }
+        saveDocsState();
         updateStatus();
         renderAllAnnots();
         saveDraft();
