@@ -199,6 +199,16 @@
 
   /* 舞台与纸页 */
   .stage { flex: 1; overflow: auto; background: var(--paper); padding: 32px 20px 90px; min-height: 0; display: flex; flex-direction: column; }
+  .stage.split { flex-direction: row; align-items: stretch; overflow: hidden; padding-left: 0; padding-right: 0; gap: 0; }
+  .pane-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto; padding: 32px 20px 90px; }
+  .split-divider { flex: 0 0 6px; cursor: col-resize; background: rgba(27,26,23,.06); transition: background .18s var(--ease); }
+  .split-divider:hover { background: var(--accent); }
+  .pane-side { flex: 1 1 var(--split, 50%); min-width: 220px; display: flex; flex-direction: column; min-height: 0; background: var(--sheet); border-left: 1px solid var(--hairline); }
+  .pane-side[hidden], .split-divider[hidden] { display: none; }
+  .pane-side-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--hairline); font-size: 12px; font-weight: 600; color: var(--muted); }
+  .pane-side-head button { font-size: 16px; line-height: 1; padding: 2px 8px; border: none; background: transparent; color: var(--muted); cursor: pointer; }
+  .pane-side-head button:hover { color: var(--ink); }
+  .editor.panel-editor { flex: 1; overflow: auto; padding: 40px 36px; min-height: 0; max-width: none; border-radius: 0; box-shadow: none; }
   .editor {
     flex-shrink: 0;
     width: 100%; max-width: 840px; margin: 0 auto;
@@ -719,6 +729,7 @@
 <div class="docbar" id="docbar" hidden>
   <div class="doc-tabs" id="doc-tabs"></div>
   <button id="doc-new" title="新建文档">＋</button>
+  <button id="split-btn" class="split-btn" title="双文档分屏">分屏</button>
 </div>
 
 <div class="workspace" id="workspace">
@@ -732,9 +743,16 @@
     </div>
     <div class="nav-body" id="nav-list"></div>
   </aside>
-  <div class="stage">
-    <div class="editor" id="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Markdown 编辑器"></div>
-    <textarea class="source" id="source" style="display:none" placeholder="# 在这里粘贴或编辑 Markdown 源码…" aria-label="Markdown 源码"></textarea>
+  <div class="stage" id="stage">
+    <div class="pane-main">
+      <div class="editor" id="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Markdown 编辑器"></div>
+      <textarea class="source" id="source" style="display:none" placeholder="# 在这里粘贴或编辑 Markdown 源码…" aria-label="Markdown 源码"></textarea>
+    </div>
+    <div class="split-divider" id="split-divider" hidden title="拖动调整分屏比例"></div>
+    <div class="pane-side" id="pane-side" hidden>
+      <div class="pane-side-head"><span>副文档</span><button id="split-close" aria-label="关闭分屏">×</button></div>
+      <div class="editor panel-editor" id="editor2" contenteditable="true" role="textbox" aria-multiline="true" aria-label="副文档编辑器"></div>
+    </div>
   </div>
   <aside class="annot-sidebar" id="annot-sidebar" aria-label="批注列表">
     <div class="annot-sidebar-head">
@@ -1773,6 +1791,81 @@
     openNewDoc('', null);
     editor.focus();
   });
+
+  // ===== 双文档分屏 =====
+  const splitBtn = document.getElementById('split-btn');
+  const splitDivider = document.getElementById('split-divider');
+  const paneSide = document.getElementById('pane-side');
+  const editor2 = document.getElementById('editor2');
+  const stage = document.getElementById('stage');
+  let sideDocId = null;
+  let splitActive = false;
+
+  function isSideActive() { return splitActive && document.activeElement === editor2; }
+
+  function openSplit() {
+    // 选一个「除当前激活标签外」的文档做副文档
+    const others = docs.filter(d => d.id !== activeDocId);
+    if (!others.length) {
+      showToast('需要至少再打开一个文档才能分屏（可用 ＋ 新建或载入）');
+      return;
+    }
+    // 简单选择弹窗：列出可选文档
+    if (others.length === 1) { setSideDoc(others[0]); return; }
+    const list = others.map(d => d.title || '未命名文档').join('\n');
+    const idx = prompt('选择副文档（输入序号）：\n' + others.map((d, i) => (i + 1) + '. ' + (d.title || '未命名文档')).join('\n'));
+    const n = parseInt(idx, 10);
+    if (isNaN(n) || n < 1 || n > others.length) { showToast('已取消分屏'); return; }
+    setSideDoc(others[n - 1]);
+  }
+  function setSideDoc(doc) {
+    sideDocId = doc.id;
+    editor2.innerHTML = doc.html;
+    splitActive = true;
+    paneSide.hidden = false;
+    splitDivider.hidden = false;
+    stage.classList.add('split');
+    splitBtn.classList.add('active');
+  }
+  function closeSplit() {
+    // 若副文档被改动过，先把内容存回它的标签
+    if (sideDocId) {
+      const d = docById(sideDocId);
+      if (d) { d.html = editor2.innerHTML; d.title = docTitleFromHtml(editor2.innerHTML); saveDocsState(); }
+    }
+    splitActive = false;
+    sideDocId = null;
+    paneSide.hidden = true;
+    splitDivider.hidden = true;
+    stage.classList.remove('split');
+    splitBtn.classList.remove('active');
+  }
+  splitBtn.addEventListener('click', () => { if (splitActive) closeSplit(); else openSplit(); });
+  document.getElementById('split-close').addEventListener('click', closeSplit);
+  // 副文档编辑后同步回它的标签 + 只持久化标签（不触发主编辑器的草稿保存）
+  let sideTimer;
+  editor2.addEventListener('input', () => {
+    const d = docById(sideDocId);
+    if (d) { d.html = editor2.innerHTML; d.title = docTitleFromHtml(editor2.innerHTML); }
+    clearTimeout(sideTimer);
+    sideTimer = setTimeout(() => saveDocsState(), 800);
+  });
+  // 副窗格可独立获得焦点编辑（不接工具栏/高级功能，纯对照编辑+复制）
+
+  // 拖拽分隔条调整左右比例
+  function startDrag(e) {
+    e.preventDefault();
+    const rect = stage.getBoundingClientRect();
+    function move(ev) {
+      let pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      pct = Math.max(20, Math.min(80, pct));
+      stage.style.setProperty('--split', pct + '%');
+    }
+    function up() { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+  splitDivider.addEventListener('mousedown', startDrag);
 
   function openFile(f) {
     const file = (f.name || '').replace(/\.[^.]+$/, '') || null;
