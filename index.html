@@ -415,6 +415,30 @@
   .ctx-item:hover { background: #F3F0E9; }
   .ctx-sep { height: 1px; background: var(--hairline); margin: 4px 8px; }
 
+  /* 全局搜索浮层 */
+  .global-search {
+    position: fixed; inset: 0; z-index: 140; background: rgba(27,26,23,.22);
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh;
+  }
+  .global-search[hidden] { display: none; }
+  .gs-box {
+    width: min(620px, calc(100vw - 40px)); max-height: 62vh; display: flex; flex-direction: column;
+    background: var(--sheet); border-radius: 16px; box-shadow: 0 30px 80px rgba(27,26,23,.32);
+    animation: pop-in .18s var(--ease); overflow: hidden;
+  }
+  .gs-box input {
+    display: block; width: 100%; border: none; outline: none; padding: 16px 20px;
+    font-family: var(--font-ui); font-size: 16px; color: var(--ink); background: transparent;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .gs-results { overflow-y: auto; padding: 8px; }
+  .gs-group { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--muted); padding: 10px 12px 4px; text-transform: uppercase; }
+  .gs-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; cursor: pointer; }
+  .gs-item:hover, .gs-item.active { background: #F3F0E9; }
+  .gs-item .title { font-size: 14px; color: var(--ink); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gs-item .meta { font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+  .gs-empty { padding: 26px; text-align: center; color: var(--muted); font-size: 13px; }
+
   .focus-chip.running { border-color: var(--accent); color: var(--accent); }
   .focus-chip.running .focus-dot { background: var(--accent); animation: focus-pulse 1.4s ease-in-out infinite; }
   @keyframes focus-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
@@ -1071,6 +1095,13 @@
 </div>
 
 <div class="tooltip" id="tooltip"><div class="tt-title"></div><div class="tt-desc"></div></div>
+
+<div class="global-search" id="global-search" hidden>
+  <div class="gs-box">
+    <input type="search" id="gs-input" placeholder="搜索知识库 / 历史 / 单词库… (Ctrl+K)" aria-label="全局搜索">
+    <div class="gs-results" id="gs-results"></div>
+  </div>
+</div>
 
 <div class="ctx-menu" id="ctx-menu" hidden>
   <div class="ctx-item" data-act="rename">✏️ 重命名</div>
@@ -1911,6 +1942,96 @@
     editor.focus();
   });
 
+  // ===== 全局搜索（Ctrl+K）=====
+  const gs = document.getElementById('global-search');
+  const gsInput = document.getElementById('gs-input');
+  const gsResults = document.getElementById('gs-results');
+  let gsSelections = []; // 扁平索引当前结果，供键盘导航
+  function openGlobalSearch() {
+    gs.hidden = false;
+    gsInput.value = '';
+    gsResults.innerHTML = '';
+    gsSelections = [];
+    gsInput.focus();
+  }
+  function closeGlobalSearch() { gs.hidden = true; }
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openGlobalSearch(); }
+    else if (e.key === 'Escape' && !gs.hidden) closeGlobalSearch();
+  });
+  gs.addEventListener('mousedown', (e) => { if (e.target === gs) closeGlobalSearch(); });
+
+  function searchGlobal(q) {
+    q = q.trim().toLowerCase();
+    if (!q) { gsResults.innerHTML = '<div class="gs-empty">输入关键词搜索…</div>'; gsSelections = []; return; }
+    const results = [];
+    // 知识库
+    getLibrary().forEach(d => {
+      if ((d.title + ' ' + (d.text || '')).toLowerCase().includes(q)) {
+        results.push({ type: '知识库', label: d.title || '未命名', sub: '知识库文档', id: d.id });
+      }
+    });
+    // 历史
+    getHistory().forEach(h => {
+      const t = (h.title || '未命名');
+      if ((t + ' ' + (h.text || '')).toLowerCase().includes(q)) {
+        results.push({ type: '历史', label: t, sub: new Date(h.savedAt).toLocaleString('zh-CN', {hour12:false}), id: h.id });
+      }
+    });
+    // 单词库
+    getWords().forEach(w => {
+      if ((w.word + ' ' + (w.trans || '')).toLowerCase().includes(q)) {
+        results.push({ type: '单词', label: w.word, sub: w.trans || '', id: w.id });
+      }
+    });
+    gsSelections = results;
+    if (!results.length) { gsResults.innerHTML = '<div class="gs-empty">没有匹配的结果</div>'; return; }
+    const order = { '知识库': 0, '历史': 1, '单词': 2 };
+    results.sort((a, b) => order[a.type] - order[b.type]);
+    let html = '', lastGroup = '';
+    results.forEach((r, i) => {
+      if (r.type !== lastGroup) { html += '<div class="gs-group">' + r.type + '</div>'; lastGroup = r.type; }
+      html += '<div class="gs-item" data-i="' + i + '"><span class="title">' + escapeHtml(r.label) + '</span><span class="meta">' + escapeHtml(r.sub) + '</span></div>';
+    });
+    gsResults.innerHTML = html;
+    gsResults.querySelectorAll('.gs-item')[0] && gsResults.querySelectorAll('.gs-item')[0].classList.add('active');
+  }
+  gsInput.addEventListener('input', () => searchGlobal(gsInput.value));
+  gsResults.addEventListener('click', (e) => {
+    const item = e.target.closest('.gs-item');
+    if (!item) return;
+    goToSearchResult(gsSelections[Number(item.dataset.i)]);
+  });
+  function goToSearchResult(r) {
+    if (!r) return;
+    closeGlobalSearch();
+    if (r.type === '知识库') {
+      const doc = getLibrary().find(x => x.id === r.id);
+      if (doc) openLibraryDoc(doc);
+    } else if (r.type === '历史') {
+      const h = getHistory().find(x => x.id === r.id);
+      if (h) { restoreHistoryEntry(h); }
+    } else if (r.type === '单词') {
+      setView('wordbook'); renderWords();
+    }
+  }
+  function restoreHistoryEntry(h) {
+    editor.innerHTML = h.html;
+    currentFileBase = (h.title || '').replace(/[\\/:*?"<>|]/g, '') || null;
+    updateStatus(); renderAllAnnots(); saveDraft();
+    setView('editor');
+    showToast('已恢复历史：' + (h.title || '未命名'));
+  }
+  // 键盘上下导航
+  gsInput.addEventListener('keydown', (e) => {
+    const items = gsResults.querySelectorAll('.gs-item');
+    if (!items.length) return;
+    const idx = [...items].findIndex(i => i.classList.contains('active')) || 0;
+    if (e.key === 'ArrowDown') { e.preventDefault(); const n = Math.min(idx + 1, items.length - 1); items.forEach(i => i.classList.remove('active')); items[n].classList.add('active'); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); const n = Math.max(idx - 1, 0); items.forEach(i => i.classList.remove('active')); items[n].classList.add('active'); }
+    else if (e.key === 'Enter') { e.preventDefault(); const it = gsResults.querySelector('.gs-item.active'); if (it) goToSearchResult(gsSelections[Number(it.dataset.i)]); }
+  });
+
   // ===== 双文档分屏（独立对照界面，作为独立 view）=====
   const splitTool = document.getElementById('split-tool');
   const splitBar = document.getElementById('split-bar');
@@ -2216,15 +2337,20 @@
     try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
     const data = {
       app: 'folio',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       history: getHistory(),
       draft: draft,
       library: getLibrary(),
-      categories: getCats()
+      categories: getCats(),
+      // round 3: 纳入多标签、单词库、专注记录、快照
+      docs: docs,
+      words: getWords(),
+      focus: getFocusRecords(),
+      snapshots: getSnapshots()
     };
     downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'folio备份.json');
-    showToast('已导出备份（历史 ' + data.history.length + ' 条 · 知识库 ' + data.library.length + ' 篇）');
+    showToast('已导出备份（历史 ' + data.history.length + ' 条 · 知识库 ' + data.library.length + ' 篇 · 标签 ' + data.docs.length + ' 个 · 单词 ' + data.words.length + ' 词）');
   });
 
   document.getElementById('history-import').addEventListener('click', () => {
@@ -2243,7 +2369,17 @@
       if (Array.isArray(data.history)) setHistory(data.history);
       if (Array.isArray(data.library)) setLibrary(data.library);
       if (Array.isArray(data.categories)) setCats(data.categories);
+      if (Array.isArray(data.words)) setWords(data.words);
+      if (Array.isArray(data.focus)) setFocusRecords(data.focus);
+      if (Array.isArray(data.snapshots)) setSnapshots(data.snapshots);
       if (data.draft && data.draft.html) localStorage.setItem(DRAFT_KEY, JSON.stringify(data.draft));
+      if (Array.isArray(data.docs) && data.docs.length) {
+        docs = data.docs;
+        activeDocId = data.activeDocId && docById(data.activeDocId) ? data.activeDocId : docs[0].id;
+        const m = docById(activeDocId);
+        if (m) { editor.innerHTML = m.html; currentFileBase = m.file || null; }
+        showDocbar(); renderDocTabs(); renderAllAnnots();
+      }
       renderHistory();
       renderLibrary();
       if (data.draft && data.draft.html && contentEmpty()) {
@@ -2251,7 +2387,7 @@
         updateStatus();
         renderAllAnnots();
       }
-      showToast('已导入备份（历史 ' + (data.history ? data.history.length : 0) + ' 条 · 知识库 ' + (data.library ? data.library.length : 0) + ' 篇）');
+      showToast('已导入备份（历史 ' + (data.history ? data.history.length : 0) + ' 条 · 知识库 ' + (data.library ? data.library.length : 0) + ' 篇 · 标签 ' + (data.docs ? data.docs.length : 0) + ' 个 · 单词 ' + (data.words ? data.words.length : 0) + ' 词）');
     };
     reader.readAsText(f, 'utf-8');
   });
