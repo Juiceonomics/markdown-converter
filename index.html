@@ -1799,7 +1799,8 @@
     const html = getExportHtml();
     d.html = html;
     d.file = currentFileBase;
-    d.title = docTitleFromHtml(html);
+    // 用户手动重命名过(titleUserSet)则保留用户命名，否则跟随内容第一个 H1
+    if (!d.titleUserSet) d.title = docTitleFromHtml(html);
   }
   const DOCS_KEY = 'folio.docs';
   function saveDocsState() {
@@ -1910,8 +1911,11 @@
       const name = prompt('重命名文档：', d.title || '');
       if (name && name.trim()) {
         d.title = name.trim();
+        d.titleUserSet = true; // 标记用户手动命名，saveActiveDoc 不再用 H1 覆盖
         if (id === activeDocId) currentFileBase = name.trim();
-        saveDocsState(); renderDocTabs();
+        // 直接持久化 docs（不走 saveDocsState→saveActiveDoc，避免被 docTitleFromHtml 覆写标题）
+        try { localStorage.setItem(DOCS_KEY, JSON.stringify({ docs: docs, activeDocId: activeDocId })); } catch (e) {}
+        renderDocTabs();
         showToast('已重命名为：' + name.trim());
       }
     } else if (title === 'copy-title') {
