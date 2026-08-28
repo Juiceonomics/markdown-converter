@@ -400,6 +400,21 @@
   /* 专注计时 */
   .focus-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--hairline-strong); background: #fff; color: var(--ink); font-family: var(--mono); font-size: 13px; font-weight: 600; }
   .focus-chip .focus-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  /* 右键上下文菜单 */
+  .ctx-menu {
+    position: fixed; z-index: 120; min-width: 168px;
+    background: var(--sheet); border: 1px solid var(--hairline); border-radius: 12px;
+    box-shadow: 0 14px 44px rgba(27,26,23,.18); padding: 6px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .ctx-menu[hidden] { display: none; }
+  .ctx-item {
+    font-size: 13px; color: var(--ink); padding: 8px 12px; border-radius: 8px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  }
+  .ctx-item:hover { background: #F3F0E9; }
+  .ctx-sep { height: 1px; background: var(--hairline); margin: 4px 8px; }
+
   .focus-chip.running { border-color: var(--accent); color: var(--accent); }
   .focus-chip.running .focus-dot { background: var(--accent); animation: focus-pulse 1.4s ease-in-out infinite; }
   @keyframes focus-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
@@ -1056,6 +1071,16 @@
 </div>
 
 <div class="tooltip" id="tooltip"><div class="tt-title"></div><div class="tt-desc"></div></div>
+
+<div class="ctx-menu" id="ctx-menu" hidden>
+  <div class="ctx-item" data-act="rename">✏️ 重命名</div>
+  <div class="ctx-item" data-act="copy-title">复制标题</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" data-act="save-lib">存入知识库</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" data-act="close">关闭此标签</div>
+  <div class="ctx-item" data-act="close-others">关闭其他标签</div>
+</div>
 
 <div class="modal-backdrop" id="paste-modal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="paste-title">
@@ -1820,6 +1845,67 @@
       if (d && d.id !== activeDocId) loadDoc(d);
     }
   });
+
+  // ===== 右键上下文菜单（文档标签）=====
+  const ctxMenu = document.getElementById('ctx-menu');
+  let ctxTargetId = null;
+  function showCtxMenu(x, y, targetId) {
+    ctxTargetId = targetId;
+    ctxMenu.hidden = false;
+    const w = ctxMenu.offsetWidth, h = ctxMenu.offsetHeight;
+    ctxMenu.style.left = Math.max(6, Math.min(x, window.innerWidth - w - 6)) + 'px';
+    ctxMenu.style.top = Math.max(6, Math.min(y, window.innerHeight - h - 6)) + 'px';
+  }
+  function hideCtxMenu() { ctxMenu.hidden = true; ctxTargetId = null; }
+  docTabs.addEventListener('contextmenu', (e) => {
+    const tab = e.target.closest('.doc-tab');
+    if (!tab) return;
+    e.preventDefault();
+    const d = docById(tab.getAttribute('data-id'));
+    if (!d) return;
+    if (d.id !== activeDocId) loadDoc(d); // 右键先选中该文档（类似许多应用）
+    showCtxMenu(e.clientX, e.clientY, d.id);
+  });
+  ctxMenu.addEventListener('click', (e) => {
+    const act = e.target.closest('.ctx-item');
+    if (!act) return;
+    const id = ctxTargetId;
+    const title = act.dataset.act;
+    hideCtxMenu();
+    if (!id) return;
+    const d = docById(id);
+    if (!d) return;
+    if (title === 'rename') {
+      const name = prompt('重命名文档：', d.title || '');
+      if (name && name.trim()) {
+        d.title = name.trim();
+        if (id === activeDocId) currentFileBase = name.trim();
+        saveDocsState(); renderDocTabs();
+        showToast('已重命名为：' + name.trim());
+      }
+    } else if (title === 'copy-title') {
+      copyToClipboard(d.title || '');
+      showToast('已复制标题');
+    } else if (title === 'save-lib') {
+      // 右键已 loadDoc 选中该文档，打开存入知识库弹窗（存当前编辑器内容）
+      openLibSaveModal();
+    } else if (title === 'close') {
+      closeDoc(id);
+    } else if (title === 'close-others') {
+      const keep = id;
+      docs = docs.filter(x => x.id === keep);
+      activeDocId = keep;
+      saveDocsState(); renderDocTabs();
+      const m = docById(activeDocId);
+      if (m) { editor.innerHTML = m.html; currentFileBase = m.file; }
+      showToast('已关闭其他标签');
+    }
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtxMenu();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCtxMenu(); });
+  document.addEventListener('scroll', hideCtxMenu, true);
   document.getElementById('doc-new').addEventListener('click', () => {
     openNewDoc('', null);
     editor.focus();
