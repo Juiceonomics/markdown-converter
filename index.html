@@ -452,7 +452,12 @@
   .split-wrap { display: flex; width: 100%; height: 100%; }
   .split-col { display: flex; flex-direction: column; min-height: 0; flex: 1 1 50%; }
   .split-col-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 18px; border-bottom: 1px solid var(--hairline); background: var(--sheet); font-size: 13px; font-weight: 600; color: var(--ink-2); }
-  .split-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display); font-size: 13.5px; color: var(--ink); }
+  .split-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display); font-size: 13.5px; color: var(--ink); }
+  /* 窗格内「换文档」下拉：伪装成幽灵按钮，保留原生下拉的可靠与可访问性 */
+  .split-swap-doc { flex: 0 0 auto; max-width: 132px; font-family: var(--font-ui); font-size: 12px; color: var(--ink-2); background: var(--paper); border: 1px solid var(--hairline); border-radius: 999px; padding: 4px 9px; cursor: pointer; appearance: none; -webkit-appearance: none; text-overflow: ellipsis; white-space: nowrap; }
+  .split-swap-doc:hover { border-color: var(--accent); color: var(--ink); }
+  .split-swap-doc:disabled { opacity: .5; cursor: default; }
+  .split-swap-doc:disabled:hover { border-color: var(--hairline); color: var(--ink-2); }
   .split-head-badge { flex: 0 0 auto; font-size: 10px; font-weight: 600; letter-spacing: .02em; color: var(--muted); background: var(--paper); border: 1px solid var(--hairline); border-radius: 999px; padding: 2px 8px; }
   .editor.split-editor { flex: 1 1 auto; flex-shrink: 1; overflow: auto; padding: 42px 40px; min-height: 0; max-width: none; width: 100%; border-radius: 0; box-shadow: none; margin: 0; scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
   .editor.split-editor::-webkit-scrollbar { width: 8px; }
@@ -1024,12 +1029,12 @@
 <section class="split-tool" id="split-tool" hidden>
   <div class="split-wrap">
     <div class="split-col split-left">
-      <div class="split-col-head"><span class="split-head-badge">主</span><span class="split-title" id="split-left-title">左（主文档）</span></div>
+      <div class="split-col-head"><span class="split-head-badge">主</span><span class="split-title" id="split-left-title">左（主文档）</span><select class="split-swap-doc" id="split-picker-main" title="切换主文档"></select></div>
       <div class="editor split-editor" id="split-editor1" contenteditable="true" role="textbox" aria-multiline="true" aria-label="主文档编辑器"></div>
     </div>
     <div class="split-bar" id="split-bar" title="拖动调整比例"></div>
     <div class="split-col split-right">
-      <div class="split-col-head"><span class="split-head-badge">副</span><span class="split-title" id="split-right-title">右（副文档）</span><button id="split-swap" class="outline" title="互换主副文档">⇄ 互换</button><button id="split-exit" class="outline">退出分屏</button></div>
+      <div class="split-col-head"><span class="split-head-badge">副</span><span class="split-title" id="split-right-title">右（副文档）</span><select class="split-swap-doc" id="split-picker-side" title="切换副文档"></select><button id="split-swap" class="outline" title="互换主副文档">⇄ 互换</button><button id="split-exit" class="outline">退出分屏</button></div>
       <div class="editor split-editor" id="split-editor2" contenteditable="true" role="textbox" aria-multiline="true" aria-label="副文档编辑器"></div>
     </div>
   </div>
@@ -1792,11 +1797,19 @@
     const h = tmp.querySelector('h1');
     return (h && h.textContent.trim()) ? h.textContent.trim().slice(0, 30) : '未命名文档';
   }
+  // 分屏时取该文档在对应窗格的实时内容，避免用隐藏主编辑器(id#editor)的过期内容覆盖
+  function getActiveDocHtml(id) {
+    if (view === 'split') {
+      if (splitState && splitState.mainId === id && splitEditor1) return splitEditor1.innerHTML;
+      if (splitState && splitState.sideId === id && splitEditor2) return splitEditor2.innerHTML;
+    }
+    return getExportHtml();
+  }
   function saveActiveDoc() {
     const d = docById(activeDocId);
     if (!d) return;
     // 用 getExportHtml()：源码模式下 content 在 source.value，这样不会丢失源码编辑
-    const html = getExportHtml();
+    const html = getActiveDocHtml(activeDocId);
     d.html = html;
     d.file = currentFileBase;
     // 用户手动重命名过(titleUserSet)则保留用户命名，否则跟随内容第一个 H1
@@ -2044,46 +2057,64 @@
   function enterSplit() {
     // 若上次分屏未清理，先保存改动，避免覆盖丢失
     if (splitState.sideId || splitState.mainId) saveSplitEdits();
-    const others = docs.filter(d => d.id !== activeDocId);
-    if (!others.length) { showToast('需要至少再打开一个文档才能分屏（可用 ＋ 新建或载入）'); return; }
-    let side = others[0];
-    if (others.length > 1) {
-      const n = parseInt(prompt('选择副文档（输入序号）：\n' + others.map((d, i) => (i + 1) + '. ' + (d.title || '未命名文档')).join('\n')), 10);
-      if (isNaN(n) || n < 1 || n > others.length) { showToast('已取消分屏'); return; }
-      side = others[n - 1];
+    // 读取记忆：分屏比例 + 上次主副文档组合
+    const prefs = loadSplitPrefs();
+    let mainDoc = null, sideDoc = null, restored = false;
+    // 恢复上次组合（仅当两篇文档都仍存在）
+    if (prefs.mainId && prefs.sideId) {
+      const pm = docById(prefs.mainId), ps = docById(prefs.sideId);
+      if (pm && ps) { mainDoc = pm; sideDoc = ps; restored = true; }
     }
-    // 进入分屏前先把当前编辑器内容存回激活标签，确保分屏主文档是最新内容
+    if (!mainDoc) {
+      const others = docs.filter(d => d.id !== activeDocId);
+      if (!others.length) { showToast('需要至少再打开一个文档才能分屏（可用 ＋ 新建或载入）'); return; }
+      let side = others[0];
+      if (others.length > 1) {
+        const n = parseInt(prompt('选择副文档（输入序号）：\n' + others.map((d, i) => (i + 1) + '. ' + (d.title || '未命名文档')).join('\n')), 10);
+        if (isNaN(n) || n < 1 || n > others.length) { showToast('已取消分屏'); return; }
+        side = others[n - 1];
+      }
+      sideDoc = side;
+      mainDoc = docById(activeDocId);
+    }
+    // 进入分屏前先把当前编辑器内容存回激活标签，确保分屏文档是最新内容
     saveActiveDoc();
     updateStatus();
-    // 主文档 = 当前激活标签
-    const mainDoc = docById(activeDocId);
     splitEditor1.innerHTML = mainDoc ? mainDoc.html : '';
-    splitEditor2.innerHTML = side.html;
+    splitEditor2.innerHTML = sideDoc.html;
     document.getElementById('split-left-title').textContent = '主：' + (mainDoc ? (mainDoc.title || '未命名') : '');
-    document.getElementById('split-right-title').textContent = '副：' + (side.title || '未命名文档');
-    splitState.sideId = side.id;
-    splitState.mainId = activeDocId;
+    document.getElementById('split-right-title').textContent = '副：' + (sideDoc.title || '未命名文档');
+    splitState.sideId = sideDoc.id;
+    splitState.mainId = mainDoc.id;
     setView('split');  // setView 会显示 split-tool 并隐藏 workspace
+    // 应用记忆的比例；填充「换文档」下拉
+    if (prefs.ratio) {
+      const r = Math.max(25, Math.min(75, prefs.ratio));
+      splitEditor1.closest('.split-col').style.flex = '0 0 ' + r + '%';
+      splitEditor2.closest('.split-col').style.flex = '1 1 auto';
+    }
+    populateSplitDocPicker('main');
+    populateSplitDocPicker('side');
+    saveSplitPrefs({ mainId: mainDoc.id, sideId: sideDoc.id, ratio: prefs.ratio || 50 });
+    if (restored) showToast('已恢复上次分屏组合');
   }
   // 退出前把副/主文档改动存回标签（供 exitSplit 和 setView 切走时共同调用）
   function saveSplitEdits() {
     if (splitState.sideId) {
       const d = docById(splitState.sideId);
-      if (d) { d.html = splitEditor2.innerHTML; d.title = docTitleFromHtml(splitEditor2.innerHTML); }
+      if (d) { d.html = splitEditor2.innerHTML; if (!d.titleUserSet) d.title = docTitleFromHtml(splitEditor2.innerHTML); }
     }
     if (splitState.mainId) {
       const m = docById(splitState.mainId);
-      if (m && splitEditor1.innerHTML !== m.html) { m.html = splitEditor1.innerHTML; m.title = docTitleFromHtml(splitEditor1.innerHTML); }
+      if (m && splitEditor1.innerHTML !== m.html) { m.html = splitEditor1.innerHTML; if (!m.titleUserSet) m.title = docTitleFromHtml(splitEditor1.innerHTML); }
     }
     saveDocsState();
   }
   function exitSplit() {
-    saveSplitEdits();
-    splitState.sideId = null; splitState.mainId = null;
+    // 交给 setView 的 cameFromSplit 分支保存分屏改动并刷新主编辑器（此时 splitState 仍有效）
     setView('editor');
-    // 展示当前激活标签已由 setView + 主编辑器刷新；确保编辑器显示正确内容
-    const m = docById(activeDocId);
-    if (m) { editor.innerHTML = m.html; currentFileBase = m.file; updateStatus(); renderAllAnnots(); }
+    // 必须在 setView 保存完之后再清空分屏状态，否则二次保存会用空状态误用隐藏编辑器的旧内容覆盖
+    splitState.sideId = null; splitState.mainId = null;
   }
   // 主副互换：两侧内容对调，docId 同步对调，主编辑器跟随新主文档
   function swapSplit() {
@@ -2105,21 +2136,91 @@
     document.getElementById('split-right-title').textContent = '右（副）' + (mainDoc.title ? '：' + mainDoc.title : '');
     renderDocTabs();
     saveDocsState();
+    populateSplitDocPicker('main');
+    populateSplitDocPicker('side');
+    saveSplitPrefs({ mainId: splitState.mainId, sideId: splitState.sideId, ratio: loadSplitPrefs().ratio || 50 });
     showToast('已互换主副文档');
   }
   document.getElementById('split-swap').addEventListener('click', swapSplit);
 
   const splitState = { mainId: null, sideId: null };
+  // 记忆上次分屏：{ mainId, sideId, ratio }，存 localStorage
+  const SPLIT_PREFS_KEY = 'folio.splitPrefs';
+  function loadSplitPrefs() {
+    try { return JSON.parse(localStorage.getItem(SPLIT_PREFS_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function saveSplitPrefs(p) {
+    try { localStorage.setItem(SPLIT_PREFS_KEY, JSON.stringify(p)); } catch (e) {}
+  }
+  // 填充某窗格的「换文档」下拉（排除对侧窗格与自身，避免同文档占据两侧）
+  function populateSplitDocPicker(pane) {
+    const otherId = pane === 'main' ? splitState.sideId : splitState.mainId;
+    const selfId = pane === 'main' ? splitState.mainId : splitState.sideId;
+    const sel = document.getElementById(pane === 'main' ? 'split-picker-main' : 'split-picker-side');
+    if (!sel) return;
+    sel.innerHTML = '';
+    const options = docs.filter(d => d.id !== otherId && d.id !== selfId);
+    if (!options.length) {
+      const o = document.createElement('option');
+      o.textContent = '没有其它文档';
+      o.value = '';
+      o.disabled = true; o.selected = true;
+      sel.appendChild(o);
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    const ph = document.createElement('option');
+    ph.textContent = '换文档 ▾';
+    ph.value = '';
+    ph.selected = true;
+    sel.appendChild(ph);
+    options.forEach(d => {
+      const o = document.createElement('option');
+      o.textContent = d.title || '未命名文档';
+      o.value = d.id;
+      sel.appendChild(o);
+    });
+  }
+  // 切换窗格绑定的文档
+  function setSplitDoc(pane, id) {
+    const d = docById(id);
+    if (!d) return;
+    if (pane === 'main') {
+      const cur = docById(splitState.mainId);
+      if (cur && splitEditor1.innerHTML !== cur.html) { cur.html = splitEditor1.innerHTML; }
+      splitState.mainId = d.id;
+      splitEditor1.innerHTML = d.html;
+      activeDocId = d.id;               // 主窗格文档即当前激活标签
+      currentFileBase = d.file || null;
+      document.getElementById('split-left-title').textContent = '主：' + (d.title || '未命名');
+      renderDocTabs();
+      saveDocsState();
+    } else {
+      const cur = docById(splitState.sideId);
+      if (cur && splitEditor2.innerHTML !== cur.html) { cur.html = splitEditor2.innerHTML; }
+      splitState.sideId = d.id;
+      splitEditor2.innerHTML = d.html;
+      document.getElementById('split-right-title').textContent = '副：' + (d.title || '未命名文档');
+      saveDocsState();
+    }
+    populateSplitDocPicker('main');
+    populateSplitDocPicker('side');
+    saveSplitPrefs({ mainId: splitState.mainId, sideId: splitState.sideId, ratio: loadSplitPrefs().ratio || 50 });
+    showToast((pane === 'main' ? '主' : '副') + '文档已切换为：' + (d.title || '未命名'));
+  }
+  document.getElementById('split-picker-main').addEventListener('change', (e) => setSplitDoc('main', e.target.value));
+  document.getElementById('split-picker-side').addEventListener('change', (e) => setSplitDoc('side', e.target.value));
   splitEditor2.addEventListener('input', () => {
     const d = docById(splitState.sideId);
-    if (d) { d.html = splitEditor2.innerHTML; d.title = docTitleFromHtml(splitEditor2.innerHTML); }
+    if (d) { d.html = splitEditor2.innerHTML; if (!d.titleUserSet) d.title = docTitleFromHtml(splitEditor2.innerHTML); }
     clearTimeout(splitState.timer);
     splitState.timer = setTimeout(() => saveDocsState(), 800);
   });
   // 主窗格编辑也实时回写（避免编辑中刷新/崩溃丢失）
   splitEditor1.addEventListener('input', () => {
     const d = docById(splitState.mainId);
-    if (d) { d.html = splitEditor1.innerHTML; d.title = docTitleFromHtml(splitEditor1.innerHTML); }
+    if (d) { d.html = splitEditor1.innerHTML; if (!d.titleUserSet) d.title = docTitleFromHtml(splitEditor1.innerHTML); }
     clearTimeout(splitState.timer1);
     splitState.timer1 = setTimeout(() => saveDocsState(), 800);
   });
@@ -2129,8 +2230,9 @@
     splitBar.classList.add('dragging');
     const wrap = splitTool.querySelector('.split-wrap');
     const rect = wrap.getBoundingClientRect();
+    let pct = Math.max(25, Math.min(75, (splitEditor1.closest('.split-col').offsetWidth / rect.width) * 100 || 50));
     function move(ev) {
-      let pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      pct = ((ev.clientX - rect.left) / rect.width) * 100;
       pct = Math.max(25, Math.min(75, pct));
       splitEditor1.closest('.split-col').style.flex = '0 0 ' + pct + '%';
       splitEditor2.closest('.split-col').style.flex = '1 1 auto';
@@ -2139,6 +2241,8 @@
       splitBar.classList.remove('dragging');
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
+      // 记住分屏比例（供下次进入分屏自动恢复）
+      saveSplitPrefs({ mainId: splitState.mainId, sideId: splitState.sideId, ratio: pct });
     }
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
