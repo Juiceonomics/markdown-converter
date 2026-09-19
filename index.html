@@ -186,6 +186,9 @@
   .nav-body { flex: 1; overflow-y: auto; padding: 8px; }
   .nav-item { display: block; width: 100%; text-align: left; font-family: var(--font-ui); font-size: 13px; padding: 6px 8px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .15s var(--ease), color .15s var(--ease); }
   .nav-item:hover { background: #F3F0E9; color: var(--ink); }
+  /* 当前阅读位置（滚动跟随高亮） */
+  .nav-item.active { background: var(--accent-soft); color: var(--ink); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+  .nav-item.active:hover { background: var(--accent-soft); }
   .nav-empty { color: var(--muted); font-size: 12px; padding: 12px 8px; }
   .annot-sidebar { width: 300px; flex: 0 0 auto; background: var(--sheet); border-left: 1px solid var(--hairline); display: flex; flex-direction: column; min-height: 0; }
   .annot-sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
@@ -1746,8 +1749,14 @@
   document.addEventListener('scroll', hideTip, true);
 
   // ===== 编辑与源码切换 =====
-  editor.addEventListener('input', updateStatus);
-  source.addEventListener('input', updateStatus);
+  // 长文档下 editor.innerText 会触发整页重排，逐字统计代价很高 —— 输入时按帧节流
+  let statusRaf = 0;
+  function scheduleStatusUpdate() {
+    if (statusRaf) return;
+    statusRaf = requestAnimationFrame(() => { statusRaf = 0; updateStatus(); });
+  }
+  editor.addEventListener('input', scheduleStatusUpdate);
+  source.addEventListener('input', scheduleStatusUpdate);
 
   editor.addEventListener('paste', (e) => {
     if (editor.innerText.trim() !== '' || editor.querySelector('h1,h2,h3,p,pre,table,ul,ol,blockquote,img')) return;
@@ -1818,7 +1827,8 @@
   const DOCS_KEY = 'folio.docs';
   function saveDocsState() {
     saveActiveDoc();
-    try { localStorage.setItem(DOCS_KEY, JSON.stringify({ docs: docs, activeDocId: activeDocId })); } catch (e) {}
+    // 标签状态写入失败必须让用户知道：静默失败会导致刷新后标签与内容对不上
+    if (!safeSet(DOCS_KEY, JSON.stringify({ docs: docs, activeDocId: activeDocId }))) warnStorageFull();
   }
   function loadDoc(d) {
     saveActiveDoc();
@@ -1927,7 +1937,8 @@
         d.titleUserSet = true; // 标记用户手动命名，saveActiveDoc 不再用 H1 覆盖
         if (id === activeDocId) currentFileBase = name.trim();
         // 直接持久化 docs（不走 saveDocsState→saveActiveDoc，避免被 docTitleFromHtml 覆写标题）
-        try { localStorage.setItem(DOCS_KEY, JSON.stringify({ docs: docs, activeDocId: activeDocId })); } catch (e) {}
+        // 标签状态写入失败必须让用户知道：静默失败会导致刷新后标签与内容对不上
+    if (!safeSet(DOCS_KEY, JSON.stringify({ docs: docs, activeDocId: activeDocId }))) warnStorageFull();
         renderDocTabs();
         showToast('已重命名为：' + name.trim());
       }
@@ -2309,25 +2320,77 @@
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
+  // ===== 本地存储安全层 =====
+  // 长文档下 localStorage 极易超配额（快照/历史各自保存完整 HTML）。所有写入统一走这里：
+  // 失败不抛错、按需截断瘦身，绝不让一次写盘失败打断整条保存链。
+  // 快照 / 历史改用「总量预算」保留最近的若干份*完整*版本，
+  // 绝不截断正文 —— 否则用户点「恢复」会恢复出一份被砍掉一半的文档（静默损坏）。
+  const SNAPSHOT_BUDGET = 1500000;
+  const HISTORY_BUDGET = 1200000;
+  const HISTORY_MAX = 50;
+  const DRAFT_FALLBACK_CLIP = 1200000;
+  function clipHtml(html, limit) {
+    if (!html || html.length <= limit) return html;
+    return html.slice(0, limit);
+  }
+  // 自最新往回累加，超出预算的旧版本丢弃；无论多大都至少保住最新一份
+  function trimByBudget(list, budget, maxCount) {
+    const out = [];
+    let used = 0;
+    for (const item of list) {
+      if (out.length >= maxCount) break;
+      const size = (item.html || '').length;
+      if (out.length && used + size > budget) break;
+      out.push(item);
+      used += size;
+    }
+    return out;
+  }
+  function safeSet(key, value) {
+    try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+  }
+  function safeRemove(key) { try { localStorage.removeItem(key); } catch (e) {} }
+  let storageWarned = false;
+  function warnStorageFull() {
+    console.warn('[Folio] localStorage 写入失败：可能已超出浏览器存储配额');
+    if (storageWarned) return;
+    storageWarned = true;
+    setTimeout(() => { storageWarned = false; }, 30000);
+    // 写入失败往往紧跟着一句「已保存」的成功 toast，稍等片刻再提示，避免被覆盖掉
+    setTimeout(() => showToast('本地存储空间不足，部分自动保存未写入；建议清理旧快照或导出备份', 6000), 350);
+  }
+
   function getHistory() {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (e) { return []; }
   }
-  function setHistory(list) { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); }
+  function setHistory(list) { if (!safeSet(HISTORY_KEY, JSON.stringify(list))) warnStorageFull(); }
 
   function saveDraft() {
-    if (contentEmpty()) { localStorage.removeItem(DRAFT_KEY); return; }
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
-      html: getExportHtml(),
+    if (contentEmpty()) { safeRemove(DRAFT_KEY); return; }
+    const html = getExportHtml();
+    const rec = {
+      html: html,
       title: deriveTitle(),
       file: currentFileBase,
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 200),
       savedAt: Date.now()
-    }));
+    };
+    if (safeSet(DRAFT_KEY, JSON.stringify(rec))) return;
+    // 整份都存不下（文档极大）→ 退回截断版并打标，恢复时明确提醒用户，绝不静默恢复半份
+    rec.html = clipHtml(html, DRAFT_FALLBACK_CLIP);
+    rec.truncated = true;
+    if (!safeSet(DRAFT_KEY, JSON.stringify(rec))) warnStorageFull();
   }
   let draftTimer;
   function scheduleDraftSave() {
     clearTimeout(draftTimer);
-    draftTimer = setTimeout(() => { saveDraft(); takeSnapshot(); saveDocsState(); }, 800);
+    // 三连保存彼此独立：任一步失败都不阻断其余步骤
+    // （原先 takeSnapshot 超配额抛错会跳过 saveDocsState，导致标签状态与内容不同步）
+    draftTimer = setTimeout(() => {
+      try { saveDraft(); } catch (e) {}
+      try { takeSnapshot(); } catch (e) {}
+      try { saveDocsState(); } catch (e) {}
+    }, 800);
   }
   editor.addEventListener('input', scheduleDraftSave);
   source.addEventListener('input', scheduleDraftSave);
@@ -2341,7 +2404,8 @@
       currentFileBase = draft.file || null;
       updateStatus();
       renderAllAnnots();
-      showToast('已恢复上次的草稿');
+      // 明确区分「完整草稿」与「因过大而只存了前半段」，不让用户误以为全部内容都在
+      showToast(draft.truncated ? '已恢复草稿（文档过大，仅恢复了前半部分）' : '已恢复上次的草稿');
     }
   }
 
@@ -2357,7 +2421,7 @@
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 120),
       savedAt: Date.now()
     });
-    setHistory(hist.slice(0, 50));
+    setHistory(trimByBudget(hist, HISTORY_BUDGET, HISTORY_MAX));
   }
 
   const historyModal = document.getElementById('history-modal');
@@ -2480,7 +2544,8 @@
       if (Array.isArray(data.words)) setWords(data.words);
       if (Array.isArray(data.focus)) setFocusRecords(data.focus);
       if (Array.isArray(data.snapshots)) setSnapshots(data.snapshots);
-      if (data.draft && data.draft.html) localStorage.setItem(DRAFT_KEY, JSON.stringify(data.draft));
+      // 用 safeSet：这里抛出会中断后续的 docs 导入与刷新，导致「半导入」且无任何提示
+      if (data.draft && data.draft.html) safeSet(DRAFT_KEY, JSON.stringify(data.draft));
       if (Array.isArray(data.docs) && data.docs.length) {
         docs = data.docs;
         activeDocId = data.activeDocId && docById(data.activeDocId) ? data.activeDocId : docs[0].id;
@@ -2506,7 +2571,17 @@
   function getSnapshots() {
     try { return JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || '[]'); } catch (e) { return []; }
   }
-  function setSnapshots(list) { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(list)); }
+  function setSnapshots(list) { if (!safeSet(SNAPSHOTS_KEY, JSON.stringify(list))) warnStorageFull(); }
+  // 写入失败时只降级到「保留最新一份」再试一次，最多两次序列化。
+  // 关键：写不进去就保持原样、绝不清空 —— 否则会变成「新快照存不下 → 旧快照全没」，
+  // 反而比改动前（setItem 失败时原值保持不变）更糟，属于静默数据丢失。
+  function setSnapshotsSafe(list) {
+    const attempts = [list.slice(0, SNAPSHOT_MAX), list.slice(0, 1)];
+    for (const l of attempts) {
+      if (l.length && safeSet(SNAPSHOTS_KEY, JSON.stringify(l))) return true;
+    }
+    return false;
+  }
   function takeSnapshot() {
     if (contentEmpty()) return;
     const html = getExportHtml();
@@ -2520,7 +2595,7 @@
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 120),
       savedAt: Date.now()
     });
-    setSnapshots(snaps.slice(0, SNAPSHOT_MAX));
+    if (!setSnapshotsSafe(trimByBudget(snaps, SNAPSHOT_BUDGET, SNAPSHOT_MAX))) warnStorageFull();
   }
 
   const versionsModal = document.getElementById('versions-modal');
@@ -2530,7 +2605,7 @@
   function renderVersions() {
     const snaps = getSnapshots();
     if (!snaps.length) {
-      versionsList.innerHTML = '<div class="hist-empty">还没有快照。编辑时（停顿约 1 秒）会自动保存最近 ' + SNAPSHOT_MAX + ' 个版本。</div>';
+      versionsList.innerHTML = '<div class="hist-empty">还没有快照。编辑时（停顿约 1 秒）会自动保存最近若干版本；为避免塞满本地存储，保留份数会随文档大小自动调整（最多 ' + SNAPSHOT_MAX + ' 份）。</div>';
       return;
     }
     versionsList.innerHTML = snaps.map((s, i) =>
@@ -2600,9 +2675,9 @@
   let libFilter = CAT_ALL, libQuery = '', libDocs = [];
 
   function getLibrary() { try { return JSON.parse(localStorage.getItem(LIBRARY_KEY) || '[]'); } catch (e) { return []; } }
-  function setLibrary(list) { localStorage.setItem(LIBRARY_KEY, JSON.stringify(list)); }
+  function setLibrary(list) { if (!safeSet(LIBRARY_KEY, JSON.stringify(list))) warnStorageFull(); }
   function getCats() { try { return JSON.parse(localStorage.getItem(CATS_KEY) || '[]'); } catch (e) { return []; } }
-  function setCats(list) { localStorage.setItem(CATS_KEY, JSON.stringify(list)); }
+  function setCats(list) { if (!safeSet(CATS_KEY, JSON.stringify(list))) warnStorageFull(); }
 
   const libList = document.getElementById('lib-list');
   const libCount = document.getElementById('lib-count');
@@ -2870,7 +2945,7 @@
   // ===== 翻译（MyMemory 默认 + DeepL / LLM 可配）=====
   const TS_KEY = 'folio.translate';
   function getTranslateCfg() { try { return JSON.parse(localStorage.getItem(TS_KEY) || 'null') || {}; } catch (e) { return {}; } }
-  function setTranslateCfg(cfg) { localStorage.setItem(TS_KEY, JSON.stringify(cfg)); }
+  function setTranslateCfg(cfg) { if (!safeSet(TS_KEY, JSON.stringify(cfg))) warnStorageFull(); }
 
   async function translateText(text) {
     const cfg = getTranslateCfg();
@@ -2928,7 +3003,7 @@
   let selOffThisDoc = false; // 此文档内关闭（每开一个文档默认重置？不，按文档记忆）
   const SEL_OFF_KEY = 'folio.selOff';
   function getSelOff() { try { return JSON.parse(localStorage.getItem(SEL_OFF_KEY) || '[]'); } catch (e) { return []; } }
-  function setSelOff(list) { localStorage.setItem(SEL_OFF_KEY, JSON.stringify(list)); }
+  function setSelOff(list) { if (!safeSet(SEL_OFF_KEY, JSON.stringify(list))) warnStorageFull(); }
   const isSelOffForCurrent = () => currentFileBase && getSelOff().includes(currentFileBase);
 
   // 「关闭本次」：本次会话内一直关闭划词栏（不记忆）
@@ -3013,7 +3088,7 @@
   // ===== 单词库 =====
   const WORDS_KEY = 'folio.words';
   function getWords() { try { return JSON.parse(localStorage.getItem(WORDS_KEY) || '[]'); } catch (e) { return []; } }
-  function setWords(list) { localStorage.setItem(WORDS_KEY, JSON.stringify(list)); }
+  function setWords(list) { if (!safeSet(WORDS_KEY, JSON.stringify(list))) warnStorageFull(); }
   function saveWord(entry) {
     const words = getWords();
     const key = entry.word.trim().toLowerCase();
@@ -3164,44 +3239,136 @@
   // ===== 导航窗格（文档大纲）=====
   const navPane = document.getElementById('nav-pane');
   const navList = document.getElementById('nav-list');
-  document.getElementById('btn-nav').addEventListener('click', () => { navPane.hidden = !navPane.hidden; });
+  document.getElementById('btn-nav').addEventListener('click', () => {
+    navPane.hidden = !navPane.hidden;
+    if (!navPane.hidden) { refreshNav(true); }
+  });
   document.getElementById('nav-close').addEventListener('click', () => { navPane.hidden = true; });
 
-  function refreshNav() {
-    const headings = editor.querySelectorAll('h1,h2,h3,h4,h5,h6');
+  // 标题元素 → 稳定锚点 id。用 WeakMap 记在内存里，不写进 DOM，
+  // 避免锚点属性混进导出的 Word / HTML / 存储内容。
+  const navAnchors = new WeakMap();
+  let navAnchorSeq = 0;
+  function anchorOf(h) {
+    let a = navAnchors.get(h);
+    if (!a) { a = 'n' + (++navAnchorSeq); navAnchors.set(h, a); }
+    return a;
+  }
+  function headingsNow() { return Array.from(editor.querySelectorAll('h1,h2,h3,h4,h5,h6')); }
+  function headingByAnchor(anchor) {
+    for (const h of headingsNow()) if (anchorOf(h) === anchor) return h;
+    return null;
+  }
+
+  let navRefs = [];   // 上次渲染时的标题元素引用
+  let navTexts = [];  // 上次渲染时的标题文本
+  // 标题集合是否与上次渲染完全一致。必须同时比对「元素身份」与「文本」：
+  // 载入文档 / 切换源码模式 / 恢复快照都会整体替换 editor 的 DOM，元素被换新但文本可能一模一样，
+  // 此时若不重建，导航项持有的就是已脱离文档的旧锚点 —— 表现为「点了不跳转，再点一次才行」。
+  function navUnchanged(headings) {
+    if (headings.length !== navRefs.length) return false;
+    for (let i = 0; i < headings.length; i++) {
+      if (headings[i] !== navRefs[i] || headings[i].textContent !== navTexts[i]) return false;
+    }
+    return true;
+  }
+  function refreshNav(force) {
+    const headings = headingsNow();
     document.getElementById('nav-count').textContent = headings.length;
+    // 只在标题集合真的变化时才重建 DOM：长文档下每次输入都整表重建会造成卡顿
+    if (!force && navUnchanged(headings)) { highlightNavByScroll(); return; }
+    navRefs = headings.slice();
+    navTexts = headings.map(h => h.textContent);
+    activeAnchor = ''; // 列表即将重建，清掉旧高亮状态以便重新计算并重新上色
     if (!headings.length) {
       navList.innerHTML = '<div class="nav-empty">文档还没有标题</div>';
       return;
     }
-    navList.innerHTML = Array.from(headings).map((h, i) => {
+    // 按锚点定位，而不是按下标：长文档下 KaTeX / hljs 的异步渲染会打乱下标，
+    // 导致「点了跳错位置或跳不动」
+    navList.innerHTML = headings.map(h => {
       const level = Number(h.tagName[1]);
       const text = h.textContent.trim() || '（无标题）';
-      return '<button class="nav-item" data-idx="' + i + '" style="padding-left:' + (6 + (level - 1) * 14) + 'px">' + escapeHtml(text) + '</button>';
+      return '<button class="nav-item" data-anchor="' + anchorOf(h) + '" style="padding-left:' + (6 + (level - 1) * 14) + 'px" title="' + escapeHtml(text) + '">' + escapeHtml(text) + '</button>';
     }).join('');
+    highlightNavByScroll();
   }
 
   // 编辑器内容变化时自动刷新大纲（输入 / 载入 / 恢复 / 导入 / 打开知识库等）
   let navTimer;
   const navObserver = new MutationObserver(() => {
     clearTimeout(navTimer);
-    navTimer = setTimeout(refreshNav, 250);
+    navTimer = setTimeout(() => refreshNav(false), 250);
   });
   navObserver.observe(editor, { childList: true, subtree: true, characterData: true });
 
-  navList.addEventListener('click', (e) => {
-    const btn = e.target.closest('.nav-item');
-    if (!btn) return;
-    const headings = editor.querySelectorAll('h1,h2,h3,h4,h5,h6');
-    const h = headings[Number(btn.dataset.idx)];
-    if (!h) return;
-    h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // 直接滚动 .stage 到目标标题：不用 scrollIntoView 的祖先推断，避免整页跳动
+  function scrollEditorToHeading(h, smooth) {
+    const stage = document.querySelector('.stage');
+    if (!stage || !h) return;
+    if (editor.style.display === 'none') { showToast('请先返回富文本模式再使用导航定位'); return; }
+    const top = h.getBoundingClientRect().top - stage.getBoundingClientRect().top + stage.scrollTop - 24;
+    stage.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
+  }
+  function flashHeading(h) {
     const prev = h.style.outline;
     h.style.outline = '2px solid var(--accent)';
     h.style.outlineOffset = '4px';
     setTimeout(() => { h.style.outline = prev; h.style.outlineOffset = ''; }, 1200);
+  }
+
+  navList.addEventListener('click', (e) => {
+    const btn = e.target.closest('.nav-item');
+    if (!btn) return;
+    const h = headingByAnchor(btn.dataset.anchor);
+    if (!h) { refreshNav(true); return; }
+    scrollEditorToHeading(h, true);
+    flashHeading(h);
+    setActiveNavItem(btn.dataset.anchor);
   });
-  refreshNav();
+
+  // ===== 滚动跟随：高亮「当前正在阅读的那一节」 =====
+  let activeAnchor = '';
+  function setActiveNavItem(anchor) {
+    activeAnchor = anchor || '';
+    navList.querySelectorAll('.nav-item').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.anchor === activeAnchor);
+    });
+  }
+  function highlightNavByScroll() {
+    if (navPane.hidden) return;
+    if (editor.style.display === 'none') return; // 源码模式下编辑器不可见，位置无意义
+    const headings = headingsNow();
+    if (!headings.length) return;
+    const stage = document.querySelector('.stage');
+    if (!stage) return;
+    // 以「视口上方 80px」为当前阅读线：最后一个越过这条线的标题就是正在读的部分。
+    // 标题在文档顺序上自上而下、top 单调不减 → 二分查找，避免长文档每次滚动遍历几百个标题
+    const line = stage.getBoundingClientRect().top + 80;
+    let lo = 0, hi = headings.length - 1, idx = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (headings[mid].getBoundingClientRect().top <= line) { idx = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    const anchor = anchorOf(headings[idx]);
+    if (anchor === activeAnchor) return;
+    setActiveNavItem(anchor);
+    // 高亮项被滚出导航视野时，把它带回视野中心（不打断用户手动浏览）
+    const btn = navList.querySelector('.nav-item.active');
+    if (btn) {
+      const b = btn.getBoundingClientRect(), c = navList.getBoundingClientRect();
+      if (b.top < c.top || b.bottom > c.bottom) {
+        navList.scrollTop += (b.top - c.top) - navList.clientHeight / 2 + b.height / 2;
+      }
+    }
+  }
+  let navScrollRaf = 0;
+  document.querySelector('.stage').addEventListener('scroll', () => {
+    if (navScrollRaf) return;
+    navScrollRaf = requestAnimationFrame(() => { navScrollRaf = 0; highlightNavByScroll(); });
+  }, { passive: true });
+  refreshNav(true);
 
   // ===== 载入 Markdown 文本 =====
   const pasteModal = document.getElementById('paste-modal');
@@ -3382,7 +3549,7 @@
   let focusRunning = false;
   let focusLastTick = 0;       // 上次计时的时间戳，用于跨刷新恢复
   function getFocusRecords() { try { return JSON.parse(localStorage.getItem(FOCUS_KEY) || '[]'); } catch (e) { return []; } }
-  function setFocusRecords(l) { localStorage.setItem(FOCUS_KEY, JSON.stringify(l)); }
+  function setFocusRecords(l) { if (!safeSet(FOCUS_KEY, JSON.stringify(l))) warnStorageFull(); }
   function fmtHMS(sec) {
     const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
     return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
@@ -3495,7 +3662,7 @@
   // 定时把进行中的状态写回 localStorage，供刷新恢复
   setInterval(() => {
     if (focusRunning && focusState.lastStarted) {
-      localStorage.setItem('folio.focus.state', JSON.stringify({ lastStarted: focusState.lastStarted }));
+      safeSet('folio.focus.state', JSON.stringify({ lastStarted: focusState.lastStarted }));
     }
   }, 5000);
 
@@ -3513,11 +3680,11 @@
   // toast 提示
   const toast = document.getElementById('toast');
   let toastTimer;
-  function showToast(msg) {
+  function showToast(msg, ms) {
     toast.textContent = msg;
     toast.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), ms || 2200);
   }
 
   // 自定义确认弹窗（替换原生 confirm）
@@ -3586,6 +3753,8 @@
         const m = docById(activeDocId);
         if (m) { editor.innerHTML = m.html; currentFileBase = m.file || null; renderAllAnnots(); }
       }
+      // 回到编辑器时同步一次导航高亮（切走期间可能滚动过）
+      try { highlightNavByScroll(); } catch (e) {}
     }
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
