@@ -2352,9 +2352,9 @@
   function safeRemove(key) { try { localStorage.removeItem(key); } catch (e) {} }
   let storageWarned = false;
   function warnStorageFull() {
-    console.warn('[Folio] localStorage 写入失败：可能已超出浏览器存储配额');
-    if (storageWarned) return;
+    if (storageWarned) return; // 连 console 一起节流：配额耗尽时写入会每 800ms 失败一次
     storageWarned = true;
+    console.warn('[Folio] localStorage 写入失败：可能已超出浏览器存储配额');
     setTimeout(() => { storageWarned = false; }, 30000);
     // 写入失败往往紧跟着一句「已保存」的成功 toast，稍等片刻再提示，避免被覆盖掉
     setTimeout(() => showToast('本地存储空间不足，部分自动保存未写入；建议清理旧快照或导出备份', 6000), 350);
@@ -3260,8 +3260,9 @@
     return null;
   }
 
-  let navRefs = [];   // 上次渲染时的标题元素引用
-  let navTexts = [];  // 上次渲染时的标题文本
+  let navRefs = [];      // 上次渲染时的标题元素引用
+  let navTexts = [];     // 上次渲染时的标题文本
+  let activeAnchor = ''; // 当前高亮的锚点（滚动跟随用）；声明在 refreshNav 之前，避免 TDZ
   // 标题集合是否与上次渲染完全一致。必须同时比对「元素身份」与「文本」：
   // 载入文档 / 切换源码模式 / 恢复快照都会整体替换 editor 的 DOM，元素被换新但文本可能一模一样，
   // 此时若不重建，导航项持有的就是已脱离文档的旧锚点 —— 表现为「点了不跳转，再点一次才行」。
@@ -3320,15 +3321,22 @@
   navList.addEventListener('click', (e) => {
     const btn = e.target.closest('.nav-item');
     if (!btn) return;
-    const h = headingByAnchor(btn.dataset.anchor);
-    if (!h) { refreshNav(true); return; }
+    let h = headingByAnchor(btn.dataset.anchor);
+    if (!h) {
+      // 编辑器 DOM 刚被整体替换、导航还在 250ms 防抖窗口里没重建：
+      // 记住点的是第几项，重建后按同一位置定位，避免「第一下点不动、要再点一次」
+      const idx = Array.prototype.indexOf.call(navList.querySelectorAll('.nav-item'), btn);
+      refreshNav(true);
+      const list = headingsNow();
+      if (idx >= 0 && list[idx]) h = list[idx];
+    }
+    if (!h) return;
     scrollEditorToHeading(h, true);
     flashHeading(h);
-    setActiveNavItem(btn.dataset.anchor);
+    setActiveNavItem(anchorOf(h));
   });
 
   // ===== 滚动跟随：高亮「当前正在阅读的那一节」 =====
-  let activeAnchor = '';
   function setActiveNavItem(anchor) {
     activeAnchor = anchor || '';
     navList.querySelectorAll('.nav-item').forEach(btn => {
