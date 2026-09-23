@@ -329,6 +329,13 @@
   }
   .modal-hint { font-size: 12px; color: var(--muted); margin-left: auto; margin-right: 10px; }
   .pdf-body { padding: 20px; background: var(--paper); }
+  /* PDF 导出参数条 */
+  .pdf-opts { flex: 0 0 auto; display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding: 10px 22px; border-top: 1px solid var(--hairline); background: var(--sheet); font-size: 12.5px; color: var(--ink-2); }
+  .pdf-opts label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .pdf-opts select { font-family: var(--font-ui); font-size: 12.5px; color: var(--ink); background: var(--paper); border: 1px solid var(--hairline-strong); border-radius: 8px; padding: 4px 8px; cursor: pointer; }
+  .pdf-opts select:hover { border-color: var(--ink-2); }
+  .pdf-opts select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pdf-opt-tip { margin-left: auto; color: var(--muted); font-size: 12px; }
   .pdf-page {
     width: 100%; min-height: 500px; max-width: none; margin: 0 auto;
     background: #fff; padding: 30px 38px; border-radius: 2px;
@@ -638,6 +645,25 @@
     .editor img { max-width: 100% !important; height: auto; }
     .editor:empty::before { content: none; }
     .source { display: none !important; }
+
+    /* 分页质量：让导出结果像排过版，而不是被打印机随机切断 */
+    /* 标题不与紧随其后的正文分离（避免标题孤零零留在页尾） */
+    .editor h1, .editor h2, .editor h3, .editor h4, .editor h5, .editor h6 {
+      break-after: avoid-page; page-break-after: avoid; break-inside: avoid;
+    }
+    /* 图片、行内公式、引用块不跨页断裂 */
+    .editor img, .editor figure, .editor .math-block, .editor blockquote {
+      break-inside: avoid; page-break-inside: avoid;
+    }
+    /* 表格按「行」不拆（整表 avoid 会把长表格整块顶到下一页，反而更差） */
+    .editor tr, .editor li { break-inside: avoid; page-break-inside: avoid; }
+    /* 段落避免单行孤行 / 寡行 */
+    .editor p { orphans: 3; widows: 3; }
+    .editor ul, .editor ol { orphans: 2; widows: 2; }
+    /* 分割线不落在页尾 */
+    .editor hr { break-after: avoid; page-break-after: avoid; }
+    /* 正文首元素不留多余上边距 */
+    .editor > *:first-child { margin-top: 0 !important; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1100,6 +1126,37 @@
     </div>
     <div class="modal-body pdf-body">
       <div class="pdf-page" id="pdf-preview"></div>
+    </div>
+    <div class="pdf-opts">
+      <label>纸张
+        <select id="pdf-opt-page">
+          <option value="A4" selected>A4</option>
+          <option value="A3">A3</option>
+          <option value="Letter">Letter</option>
+        </select>
+      </label>
+      <label>边距
+        <select id="pdf-opt-margin">
+          <option value="20mm" selected>常规 20mm</option>
+          <option value="12mm">窄 12mm</option>
+          <option value="28mm">宽 28mm</option>
+        </select>
+      </label>
+      <label>字号
+        <select id="pdf-opt-font">
+          <option value="10.5pt">五号 10.5pt</option>
+          <option value="12pt" selected>小四 12pt</option>
+          <option value="14pt">四号 14pt</option>
+        </select>
+      </label>
+      <label>行距
+        <select id="pdf-opt-line">
+          <option value="1.5">1.5 倍</option>
+          <option value="1.75" selected>1.75 倍</option>
+          <option value="2">2.0 倍</option>
+        </select>
+      </label>
+      <span class="pdf-opt-tip">页码：在打印对话框勾选「页眉和页脚」</span>
     </div>
     <div class="modal-foot">
       <button id="pdf-download" class="primary">下载 PDF</button>
@@ -4924,20 +4981,76 @@ ${bodyHtml}
 </html>`;
   }
 
-  // ===== PDF 预览弹窗（点「导出 PDF」打开，可调大小/关闭；点「下载 PDF」才真正打印）=====
+  // ===== PDF 预览弹窗（点「导出 PDF」打开，可调大小/参数；点「下载 PDF」才真正打印）=====
   const pdfModal = document.getElementById('pdf-modal');
+  const pdfPreview = document.getElementById('pdf-preview');
+
+  // 导出参数：纸张 / 边距 / 正文字号 / 行距（记忆在本地，下次沿用）
+  const PDF_OPTS_KEY = 'folio.pdfOpts';
+  const PDF_PAGE_MM = { A4: 210, A3: 297, Letter: 215.9 };
+  const MM2PX = 3.4; // 预览折算：1mm ≈ 3.4px
+  const pdfOptEls = {
+    page: document.getElementById('pdf-opt-page'),
+    margin: document.getElementById('pdf-opt-margin'),
+    font: document.getElementById('pdf-opt-font'),
+    line: document.getElementById('pdf-opt-line')
+  };
+  function readPdfOpts() {
+    return {
+      page: pdfOptEls.page.value, margin: pdfOptEls.margin.value,
+      font: pdfOptEls.font.value, line: pdfOptEls.line.value
+    };
+  }
+  function savePdfOpts() { safeSet(PDF_OPTS_KEY, JSON.stringify(readPdfOpts())); }
+  function loadPdfOpts() {
+    let o = {};
+    try { o = JSON.parse(localStorage.getItem(PDF_OPTS_KEY)) || {}; } catch (e) {}
+    Object.keys(pdfOptEls).forEach(k => {
+      if (o[k] && pdfOptEls[k].querySelector('option[value="' + o[k] + '"]')) pdfOptEls[k].value = o[k];
+    });
+  }
+  // 预览实时反映参数：页宽按纸张比例示意，内边距/字号/行距按所选值折算
+  function syncPdfPreview() {
+    const o = readPdfOpts();
+    pdfPreview.style.maxWidth = Math.round(PDF_PAGE_MM[o.page] * MM2PX) + 'px';
+    pdfPreview.style.padding = Math.round(parseFloat(o.margin) * MM2PX) + 'px';
+    pdfPreview.style.fontSize = (parseFloat(o.font) * 1.3333).toFixed(1) + 'px';
+    pdfPreview.style.lineHeight = o.line;
+  }
+  Object.keys(pdfOptEls).forEach(k => pdfOptEls[k].addEventListener('change', () => {
+    savePdfOpts();
+    syncPdfPreview();
+  }));
+  loadPdfOpts();
+
+  // 打印前把纸张/边距/字号写成「只在 print 媒体生效」的样式。
+  // 插到 head 末尾 → 规则晚于主样式表，冲突属性以后者为准（覆盖默认 14mm 边距）。
+  function applyPdfPrintStyle() {
+    const o = readPdfOpts();
+    let el = document.getElementById('pdf-print-style');
+    if (!el) {
+      el = document.createElement('style');
+      el.id = 'pdf-print-style';
+      document.head.appendChild(el);
+    }
+    el.textContent = '@media print{' +
+      '@page{ size:' + o.page + '; margin:' + o.margin + '; }' +
+      '.editor{ font-size:' + o.font + ' !important; line-height:' + o.line + ' !important; }' +
+      '}';
+  }
+
   function openPdfModal() {
     if (contentEmpty()) { showToast('内容为空，请先输入或编辑'); return; }
     saveToHistory();
     if (mode === 'source') setMode('wysiwyg');
-    const preview = document.getElementById('pdf-preview');
-    preview.innerHTML = getExportHtml();
-    preview.querySelectorAll('.math-inline, .math-block').forEach(el => {
+    pdfPreview.innerHTML = getExportHtml();
+    pdfPreview.querySelectorAll('.math-inline, .math-block').forEach(el => {
       if (window.katex) {
         try { el.innerHTML = katex.renderToString(el.getAttribute('data-tex') || '', { displayMode: el.classList.contains('math-block'), throwOnError: false }); }
         catch (e) { el.textContent = el.getAttribute('data-tex') || el.textContent; }
       }
     });
+    syncPdfPreview();
     pdfModal.hidden = false;
     document.getElementById('pdf-close').focus();
   }
@@ -4948,6 +5061,7 @@ ${bodyHtml}
   pdfModal.addEventListener('mousedown', (e) => { if (e.target === pdfModal) closePdfModal(); });
   document.addEventListener('keydown', (e) => { if (!pdfModal.hidden && e.key === 'Escape') closePdfModal(); });
   document.getElementById('pdf-download').addEventListener('click', () => {
+    applyPdfPrintStyle(); // 必须在下拉值确定后、打印前注入
     closePdfModal();
     const prevTitle = document.title;
     try {
