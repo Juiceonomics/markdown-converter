@@ -169,23 +169,27 @@ Expected: 输出含 `ERR BEAUTIFY_PRESETS is not defined`（证明尚未实现�
     });
     return n;
   }
-  // C6：标题层级归一化——首标题平移到 h1，且不允许跳级
+  // C6：标题层级归一化——首标题归一为 h1，且不允许跳级。
+  // 用「映射表」而非逐元素 clamp：逐元素会把同级兄弟打散
+  //（如 ### 1.1 / ### 1.2 会被算成不同级别），破坏文档结构。
   function bzNormalizeHeadings(root) {
     const hs = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6'));
     if (!hs.length) return 0;
     const lvlOf = h => Number(h.tagName[1]);
-    const offset = lvlOf(hs[0]) - 1;
+    const map = {};
     let prev = 0, changed = 0;
     hs.forEach(h => {
-      let l = Math.min(6, Math.max(1, lvlOf(h) - offset));
-      if (prev > 0 && l > prev + 1) l = prev + 1;
-      if (l !== lvlOf(h)) {
-        const nh = document.createElement('h' + l);
+      const o = lvlOf(h);
+      let n;
+      if (o in map) { n = map[o]; }
+      else { n = Math.min(o, prev + 1); map[o] = n; }
+      if (n !== o) {
+        const nh = document.createElement('h' + n);
         nh.innerHTML = h.innerHTML;
         h.replaceWith(nh);
         changed++;
       }
-      prev = l;
+      prev = n;
     });
     return changed;
   }
@@ -251,9 +255,15 @@ window.addEventListener('load', function () {
     // 排版：h1/h3/正文
     var r1 = beautifyApply('<h1>大</h1><h3>小</h3><p>正文</p>', 'gov');
     out.push('gov.html=' + r1.html);
-    // C6：首标题平移 + 不跳级
+    // C6：首标题归一为 h1 + 不跳级
     var r2 = beautifyApply('<h2>A</h2><h4>B</h4><h3>C</h3>', 'clean');
     t('C6', (r2.html.match(/<h[1-6]/g) || []).join(','), '<h1,<h2,<h3');
+    // C6：同级兄弟必须仍是同级（逐元素 clamp 会在这里失败）
+    var r2b = beautifyApply('<h2>第一章</h2><h3>1.1</h3><h3>1.2</h3><h4>1.2.1</h4>', 'clean');
+    t('C6同级', (r2b.html.match(/<h[1-6]/g) || []).join(','), '<h1,<h2,<h2,<h3');
+    // C6：文档从 h3 开始
+    var r2c = beautifyApply('<h3>X</h3><h4>Y</h4><h4>Z</h4>', 'clean');
+    t('C6起点h3', (r2c.html.match(/<h[1-6]/g) || []).join(','), '<h1,<h2,<h2');
     // C5：仅删中文之间空格，中英之间的保留
     var r3 = beautifyApply('<p>\u4e2d \u6587 English \u4e2d \u6587</p>', 'clean');
     t('C5', /English\s/.test(r3.html) && !/\u4e2d \u6587/.test(r3.html), true);
