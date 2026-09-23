@@ -1,5 +1,6 @@
-# 可复用的无头 Chrome 校验：加载 index.html，注入 JS，断言表达式，回传结果。
-# 用法: python tools/headless_check.py <注入JS文件> <断言表达式>
+# 可复用的无头 Chrome 校验：加载 index.html，注入 JS，回传注入脚本打印的结果。
+# 注入脚本需自行输出以 FAIL 开头的行表示失败；本脚本据此决定退出码（有 FAIL → 1）。
+# 用法: python tools/headless_check.py <注入JS文件>
 import os, re, subprocess, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,5 +29,8 @@ def run(inject_js: str) -> str:
             os.remove(hp)
 
 if __name__ == "__main__":
-    inject = open(sys.argv[1], encoding="utf-8").read()
-    print(run(inject))
+    out = run(open(sys.argv[1], encoding="utf-8").read())
+    print(out)
+    # 有 FAIL 行、或根本没捕获到结果 → 以非零码退出，让调用方能真正判定失败
+    failed = re.search(r'^FAIL ', out, re.M) or out.startswith("(未捕获结果)")
+    sys.exit(1 if failed else 0)

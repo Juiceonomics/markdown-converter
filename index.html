@@ -5101,6 +5101,11 @@ ${bodyHtml}
   function bzRemoveEmptyBlocks(root) {
     let n = 0;
     root.querySelectorAll('p, div, li').forEach(el => {
+      // querySelectorAll 返回的是静态列表：外层空块被移除后，随外层一起脱离 root 的内层空块
+      // 仍会被匹配到，这里不再判一次就会重复计数。用 root.contains 判「是否仍在 root 内」；
+      // 不能用 el.isConnected——root 是游离节点，其全部后代的 isConnected 恒为 false，
+      // 那样会把所有元素都跳过，一个空块也删不掉。
+      if (!root.contains(el)) return;
       if (el.querySelector('pre, code, img, table, ul, ol')) return;
       if (el.tagName === 'LI' && el.querySelector('p, div')) return;
       if ((el.textContent || '').replace(/[\s\u3000\u00a0]+/g, '')) return;
