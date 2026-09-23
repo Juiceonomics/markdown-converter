@@ -1863,11 +1863,55 @@
   let activeDocId = null;
   function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
   function docById(id) { return docs.find(d => d.id === id); }
-  function docTitleFromHtml(html) {
+  // 去掉行首/行内的 Markdown 记号，用于把正文首行当标题
+  function stripMdMarks(s) {
+    return (s || '')
+      .replace(/^#{1,6}\s+/, '')                 // 标题
+      .replace(/^>\s*/, '')                      // 引用
+      .replace(/^[-*+]\s+(\[[ xX]\]\s+)?/, '')   // 列表 / 任务列表
+      .replace(/^\d+[.)]\s+/, '')                // 有序列表
+      .replace(/[*_`\[\]]/g, '')                 // 行内强调 / 链接 / 代码
+      .trim();
+  }
+  // 从 HTML 取「第一个标题」（任意级别）——最像文档标题的来源
+  function docHeadingFromHtml(html) {
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
-    const h = tmp.querySelector('h1');
-    return (h && h.textContent.trim()) ? h.textContent.trim().slice(0, 30) : '未命名文档';
+    const h = tmp.querySelector('h1, h2, h3, h4, h5, h6');
+    return (h && h.textContent.trim()) ? h.textContent.trim().slice(0, 30) : '';
+  }
+  // 从 HTML 取「第一段正文」——没有标题时的次选
+  function docFirstLineFromHtml(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    for (const el of tmp.children) {
+      if (el.tagName === 'PRE') continue; // 代码块不作为标题来源
+      const src = (el.tagName === 'UL' || el.tagName === 'OL')
+        ? (el.querySelector('li') || el).textContent
+        : el.textContent;
+      const raw = (src || '').replace(/\s+/g, ' ').trim();
+      if (!raw) continue;
+      const cleaned = stripMdMarks(raw).slice(0, 30);
+      if (cleaned) return cleaned;
+    }
+    return '';
+  }
+  // 从 HTML 推断标题：任意级别的第一个标题 → 第一段正文 → ''（由调用方决定兜底）。
+  // 原先只认 h1，导致以 ## / ### 开头或无标题的 markdown 一律变成「未命名文档」，
+  // 用户每次导入都得手动重命名（导出文件名也因此变成「未命名文档」）。
+  function docTitleFromHtml(html) {
+    return docHeadingFromHtml(html) || docFirstLineFromHtml(html);
+  }
+  // 推断不出标题时的兜底：带日期时间，方便区分多次导入
+  function fallbackDocTitle() {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return '未命名 ' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  // 只在能推断出标题时才覆盖，避免把「文件名 / 用户设定」的好标题冲掉
+  function setDocTitleIfDerivable(d, html) {
+    if (!d || d.titleUserSet) return;
+    const t = docTitleFromHtml(html);
+    if (t) d.title = t;
   }
   // 分屏时取该文档在对应窗格的实时内容，避免用隐藏主编辑器(id#editor)的过期内容覆盖
   function getActiveDocHtml(id) {
@@ -1885,7 +1929,7 @@
     d.html = html;
     d.file = currentFileBase;
     // 用户手动重命名过(titleUserSet)则保留用户命名，否则跟随内容第一个 H1
-    if (!d.titleUserSet) d.title = docTitleFromHtml(html);
+    setDocTitleIfDerivable(d, html);
   }
   const DOCS_KEY = 'folio.docs';
   function saveDocsState() {
@@ -1906,7 +1950,11 @@
   }
   function openNewDoc(html, file) {
     saveActiveDoc();
-    const d = { id: genId(), html: html, file: file || null, title: docTitleFromHtml(html) };
+    // 标题优先级：文档自身的标题（任意级别）→ 文件名 → 首行正文 → 带日期的兜底名。
+    // 文件名排在首行正文之前：导入 .md 时文件名通常比正文第一句更像标题。
+    const heading = docHeadingFromHtml(html);
+    const d = { id: genId(), html: html, file: file || null,
+                title: heading || file || docFirstLineFromHtml(html) || fallbackDocTitle() };
     docs.push(d);
     activeDocId = d.id;
     if (mode === 'source') setMode('wysiwyg');
@@ -2176,11 +2224,11 @@
   function saveSplitEdits() {
     if (splitState.sideId) {
       const d = docById(splitState.sideId);
-      if (d) { d.html = splitEditor2.innerHTML; if (!d.titleUserSet) d.title = docTitleFromHtml(splitEditor2.innerHTML); }
+      if (d) { d.html = splitEditor2.innerHTML; setDocTitleIfDerivable(d, splitEditor2.innerHTML); }
     }
     if (splitState.mainId) {
       const m = docById(splitState.mainId);
-      if (m && splitEditor1.innerHTML !== m.html) { m.html = splitEditor1.innerHTML; if (!m.titleUserSet) m.title = docTitleFromHtml(splitEditor1.innerHTML); }
+      if (m && splitEditor1.innerHTML !== m.html) { m.html = splitEditor1.innerHTML; setDocTitleIfDerivable(m, splitEditor1.innerHTML); }
     }
     saveDocsState();
   }
@@ -2287,14 +2335,14 @@
   document.getElementById('split-picker-side').addEventListener('change', (e) => setSplitDoc('side', e.target.value));
   splitEditor2.addEventListener('input', () => {
     const d = docById(splitState.sideId);
-    if (d) { d.html = splitEditor2.innerHTML; if (!d.titleUserSet) d.title = docTitleFromHtml(splitEditor2.innerHTML); }
+    if (d) { d.html = splitEditor2.innerHTML; setDocTitleIfDerivable(d, splitEditor2.innerHTML); }
     clearTimeout(splitState.timer);
     splitState.timer = setTimeout(() => saveDocsState(), 800);
   });
   // 主窗格编辑也实时回写（避免编辑中刷新/崩溃丢失）
   splitEditor1.addEventListener('input', () => {
     const d = docById(splitState.mainId);
-    if (d) { d.html = splitEditor1.innerHTML; if (!d.titleUserSet) d.title = docTitleFromHtml(splitEditor1.innerHTML); }
+    if (d) { d.html = splitEditor1.innerHTML; setDocTitleIfDerivable(d, splitEditor1.innerHTML); }
     clearTimeout(splitState.timer1);
     splitState.timer1 = setTimeout(() => saveDocsState(), 800);
   });
@@ -2707,7 +2755,12 @@
         currentFileBase = s.file || null;
         // 恢复快照后同步当前标签并持久化，避免标签内容/文件名滞后
         const d = docById(activeDocId);
-        if (d) { d.html = s.html; d.file = s.file || null; d.title = docTitleFromHtml(s.html); }
+        if (d) {
+          d.html = s.html;
+          d.file = s.file || null;
+          if (s.title) d.title = s.title;                       // 快照自带标题，优先还原
+          else setDocTitleIfDerivable(d, s.html);
+        }
         saveDocsState();
         updateStatus();
         renderAllAnnots();
@@ -4745,11 +4798,19 @@
     }
     return d.innerHTML;
   }
+  // 文档标题（也用于导出文件名）：任意级别标题 → 首行正文 → 已知文件名 → 日期兜底
   function deriveTitle() {
-    const h = editor.querySelector('h1');
-    if (h && h.textContent.trim()) return h.textContent.trim();
-    const m = (mode === 'source' ? source.value : editor.innerText).match(/^#\s+(.+)$/m);
-    return m ? m[1].trim() : '未命名文档';
+    if (mode === 'source') {
+      const md = source.value || '';
+      const hm = md.match(/^#{1,6}\s+(.+)$/m);            // 任意级别的第一个标题
+      if (hm) return stripMdMarks(hm[1]).slice(0, 30);
+      const line = md.split('\n').map(s => s.trim()).find(s => s.length);
+      if (line) { const t = stripMdMarks(line).slice(0, 30); if (t) return t; }
+    } else {
+      const t = docTitleFromHtml(editor.innerHTML);
+      if (t) return t;
+    }
+    return currentFileBase || fallbackDocTitle();
   }
   function sanitizeFilename(name) {
     return name.replace(/[\\/:*?"<>|]/g, '').trim() || 'document';
@@ -5157,7 +5218,7 @@ $$\\text{MOS (%)} = \\frac{10,000 - 6,250}{10,000} = 37.5%$$
   if (!restored) {
     restoreDraft();
     if (!docs.length) {
-      docs.push({ id: genId(), html: editor.innerHTML, file: currentFileBase, title: docTitleFromHtml(editor.innerHTML) });
+      docs.push({ id: genId(), html: editor.innerHTML, file: currentFileBase, title: docTitleFromHtml(editor.innerHTML) || currentFileBase || fallbackDocTitle() });
       activeDocId = docs[0].id;
     }
     renderDocTabs();
