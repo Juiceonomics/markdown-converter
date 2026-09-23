@@ -619,8 +619,14 @@
     @page { margin: 14mm; }
     html, body { height: auto !important; min-height: 0; overflow: visible !important; }
     body { display: block !important; background: #fff !important; }
-    .toprule, header.masthead, .tabbar, .toolbar, footer.statusbar, .tooltip,
-    .annot-sidebar, .nav-pane, .sel-bar, .dd, .modal-backdrop, .toast, .drop-overlay { display: none !important; }
+    /* 打印只保留正文：所有界面外壳与浮层一律隐藏。
+       尤其 .docbar（文件标签栏）——只要开了文档就常驻，之前漏了会被一起打印进去；
+       .global-search / .ctx-menu 是 fixed 浮层，开着时也会被截进去；
+       各工具面板（压缩/图片/PDF/知识库/思维导图/专注/分屏）在对应视图下会打印出整块工具界面。 */
+    .toprule, header.masthead, .tabbar, .docbar, .toolbar, footer.statusbar, .tooltip,
+    .annot-sidebar, .nav-pane, .sel-bar, .dd, .modal-backdrop, .toast, .drop-overlay,
+    .global-search, .ctx-menu, #history-import-input,
+    .zip-tool, .lib-tool, .map-tool, .focus-tool, .split-tool { display: none !important; }
     .workspace, .stage { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; padding: 0 !important; background: #fff !important; }
     .editor {
       display: block !important; max-width: none !important; width: 100% !important;
