@@ -5042,6 +5042,136 @@ ${bodyHtml}
 </html>`;
   }
 
+  // ===== 导入一键美化 =====
+  // 三套预设：字体/字号/字重/行距/缩进/段距。字号用 pt（导出与打印一致）。
+  // 字体回退栈与工具栏 font-family 取值保持一致。
+  const BEAUTIFY_PRESETS = {
+    clean: {
+      label: '清爽',
+      h1: { f: '"Microsoft YaHei", "微软雅黑", sans-serif', s: '22pt', w: '700' },
+      h2: { f: '"Microsoft YaHei", "微软雅黑", sans-serif', s: '16pt', w: '700' },
+      h3: { f: '"Microsoft YaHei", "微软雅黑", sans-serif', s: '14pt', w: '700' },
+      body: { f: '"宋体", SimSun, serif', s: '12pt' },
+      line: '1.75', indent: '0', para: '0.8em 0', hm: '1.2em 0 0.5em'
+    },
+    gov: {
+      label: '公文',
+      h1: { f: '"方正小标宋简体", FZXiaoBiaoSong-B05S, "方正小标宋", serif', s: '22pt', w: '400' },
+      h2: { f: '"黑体", SimHei, sans-serif', s: '16pt', w: '400' },
+      h3: { f: '"楷体_GB2312", KaiTi_GB2312, "楷体", serif', s: '16pt', w: '400' },
+      body: { f: '"仿宋_GB2312", FangSong_GB2312, "仿宋", serif', s: '16pt' },
+      line: '28pt', indent: '2em', para: '0 0', hm: '1em 0 0.5em'
+    },
+    paper: {
+      label: '论文',
+      h1: { f: '"黑体", SimHei, sans-serif', s: '18pt', w: '700' },
+      h2: { f: '"黑体", SimHei, sans-serif', s: '14pt', w: '700' },
+      h3: { f: '"黑体", SimHei, sans-serif', s: '12pt', w: '700' },
+      body: { f: '"宋体", SimSun, serif', s: '12pt' },
+      line: '1.5', indent: '2em', para: '0.6em 0', hm: '1.1em 0 0.45em'
+    }
+  };
+
+  // 取 root 下所有文本节点，跳过代码/脚本内部（清理与排版都不得改动代码）
+  function bzTextNodes(root) {
+    const out = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        let p = n.parentNode;
+        while (p && p !== root) {
+          const t = p.nodeName;
+          if (t === 'PRE' || t === 'CODE' || t === 'SCRIPT' || t === 'STYLE') return NodeFilter.FILTER_REJECT;
+          p = p.parentNode;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    while (w.nextNode()) out.push(w.currentNode);
+    return out;
+  }
+  const BZ_CJK = '\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff';
+  // 文本级清理（C3 行尾空格 / C4 转义残留 / C5 仅中文之间的多余空格）
+  function bzCleanText(s) {
+    return s
+      .replace(new RegExp('([' + BZ_CJK + '])[ \\t\\u3000]+(?=[' + BZ_CJK + '])', 'g'), '$1')
+      .replace(/\\([*_#\[\]()~`+\-.!])/g, '$1')
+      .replace(/[ \t\u3000]+$/gm, '');
+  }
+  // C1 + C2：删除空块（一并达成「合并连续空行」）
+  function bzRemoveEmptyBlocks(root) {
+    let n = 0;
+    root.querySelectorAll('p, div, li').forEach(el => {
+      if (el.querySelector('pre, code, img, table, ul, ol')) return;
+      if (el.tagName === 'LI' && el.querySelector('p, div')) return;
+      if ((el.textContent || '').replace(/[\s\u3000\u00a0]+/g, '')) return;
+      el.remove(); n++;
+    });
+    return n;
+  }
+  // C6：标题层级归一化——首标题归一为 h1，且不允许跳级。
+  // 用「映射表」而非逐元素 clamp：逐元素会把同级兄弟打散
+  //（如 ### 1.1 / ### 1.2 会被算成不同级别），破坏文档结构。
+  function bzNormalizeHeadings(root) {
+    const hs = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6'));
+    if (!hs.length) return 0;
+    const lvlOf = h => Number(h.tagName[1]);
+    const map = {};
+    let prev = 0, changed = 0;
+    hs.forEach(h => {
+      const o = lvlOf(h);
+      let n;
+      if (o in map) { n = map[o]; }
+      else { n = Math.min(o, prev + 1); map[o] = n; }
+      if (n !== o) {
+        const nh = document.createElement('h' + n);
+        nh.innerHTML = h.innerHTML;
+        h.replaceWith(nh);
+        changed++;
+      }
+      prev = n;
+    });
+    return changed;
+  }
+  // 清理 + 排版。返回新 HTML 与统计。
+  function beautifyApply(html, presetKey) {
+    const p = BEAUTIFY_PRESETS[presetKey] || BEAUTIFY_PRESETS.clean;
+    const root = document.createElement('div');
+    root.innerHTML = html;
+    const stat = { emptyRemoved: 0, headings: 0, texts: 0 };
+    stat.emptyRemoved = bzRemoveEmptyBlocks(root);
+    stat.headings = bzNormalizeHeadings(root);
+    bzTextNodes(root).forEach(n => {
+      const before = n.nodeValue;
+      const after = bzCleanText(before);
+      if (after !== before) { n.nodeValue = after; stat.texts++; }
+    });
+    // 标题：四级及以下统一按三级处理；内联关掉编辑器默认装饰线
+    [['h1', 'h1'], ['h2', 'h2'], ['h3', 'h3'], ['h4', 'h3'], ['h5', 'h3'], ['h6', 'h3']].forEach(pair => {
+      root.querySelectorAll(pair[0]).forEach(el => {
+        const c = p[pair[1]];
+        el.style.fontFamily = c.f;
+        el.style.fontSize = c.s;
+        el.style.fontWeight = c.w;
+        el.style.lineHeight = p.line;
+        el.style.borderBottom = 'none';
+        el.style.paddingBottom = '0';
+        el.style.margin = p.hm;
+      });
+    });
+    // 正文：段落缩进；列表/表格/引用不缩进
+    root.querySelectorAll('p, li, td, th, blockquote').forEach(el => {
+      el.style.fontFamily = p.body.f;
+      el.style.fontSize = p.body.s;
+      el.style.lineHeight = p.line;
+      // 首行缩进只给「正文段落」：表格/列表/引用内的段落不缩进（缩进会很难看）
+      if (el.tagName === 'P' && !el.closest('td, th, li, blockquote')) {
+        el.style.textIndent = p.indent;
+        el.style.margin = p.para;
+      }
+    });
+    return { html: root.innerHTML, stat };
+  }
+
   // ===== PDF 预览弹窗（点「导出 PDF」打开，可调大小/参数；点「下载 PDF」才真正打印）=====
   const pdfModal = document.getElementById('pdf-modal');
   const pdfPreview = document.getElementById('pdf-preview');
