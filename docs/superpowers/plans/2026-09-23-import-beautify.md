@@ -38,7 +38,8 @@
 
 ```python
 # 可复用的无头 Chrome 校验：加载 index.html，注入 JS，断言表达式，回传结果。
-# 用法: python tools/headless_check.py <注入JS文件> <断言表达式>
+# 用法: python tools/headless_check.py <注入JS文件>
+# 注入脚本需自行输出以 "FAIL " 开头的行表示失败；脚本据此以非零码退出。
 import os, re, subprocess, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
