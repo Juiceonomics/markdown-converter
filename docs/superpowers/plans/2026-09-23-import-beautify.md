@@ -515,12 +515,14 @@ git push origin main
       const label = BEAUTIFY_PRESETS[docById(activeDocId)?.beautifyPreset]?.label || '';
       bzMsg.textContent = '✓ 已美化' + (label ? '（' + label + '）' : '');
       bzAutoWrap.hidden = true;
+      // 注意顺序：bzPresetButtons 首行会清空 bzActs，必须先调用它再 append 额外按钮，
+      // 否则刚加的「撤销」会被自己清掉（与上面「询问」分支的写法保持一致）
+      bzPresetButtons(k => beautifyDoc(k));
       const undo = document.createElement('button');
       undo.className = 'primary';
       undo.textContent = '撤销';
       undo.addEventListener('click', () => beautifyUndoNow());
       bzActs.appendChild(undo);
-      bzPresetButtons(k => beautifyDoc(k));
       beautifyBar.hidden = false;
       return;
     }
