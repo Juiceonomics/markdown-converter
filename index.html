@@ -2669,7 +2669,8 @@
       docs: docs,
       words: getWords(),
       focus: getFocusRecords(),
-      snapshots: getSnapshots()
+      snapshots: getSnapshots(),
+      beautify: loadBeautifyCfg()
     };
     downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'folio备份.json');
     showToast('已导出备份（历史 ' + data.history.length + ' 条 · 知识库 ' + data.library.length + ' 篇 · 标签 ' + data.docs.length + ' 个 · 单词 ' + data.words.length + ' 词）');
@@ -2694,6 +2695,10 @@
       if (Array.isArray(data.words)) setWords(data.words);
       if (Array.isArray(data.focus)) setFocusRecords(data.focus);
       if (Array.isArray(data.snapshots)) setSnapshots(data.snapshots);
+      if (data.beautify && typeof data.beautify === 'object') {
+        saveBeautifyCfg({ preset: BEAUTIFY_PRESETS[data.beautify.preset] ? data.beautify.preset : 'clean', auto: !!data.beautify.auto });
+        updateBzAutoToggle();
+      }
       // 用 safeSet：这里抛出会中断后续的 docs 导入与刷新，导致「半导入」且无任何提示
       if (data.draft && data.draft.html) safeSet(DRAFT_KEY, JSON.stringify(data.draft));
       if (Array.isArray(data.docs) && data.docs.length) {
@@ -5437,6 +5442,24 @@ ${bodyHtml}
       '}';
   }
 
+  // 美化用绝对字号，内联样式优先级高于面板的 .editor{font-size}，
+  // 因此美化过的文档把「字号/行距」置灰并说明，避免用户以为改了没生效
+  function syncPdfPanelWithBeautify() {
+    const d = docById(activeDocId);
+    const presetKey = d && d.beautifyPreset;
+    const label = presetKey && BEAUTIFY_PRESETS[presetKey] ? BEAUTIFY_PRESETS[presetKey].label : '';
+    [pdfOptEls.font, pdfOptEls.line].forEach(el => {
+      el.disabled = !!presetKey;
+      el.title = presetKey ? '本文已套用「' + label + '」样式，字号与行距由样式决定' : '';
+    });
+    const tip = document.querySelector('.pdf-opt-tip');
+    if (tip) {
+      tip.textContent = presetKey
+        ? '本文已套用「' + label + '」样式，字号与行距由样式决定'
+        : '页码：在打印对话框勾选「页眉和页脚」';
+    }
+  }
+
   function openPdfModal() {
     if (contentEmpty()) { showToast('内容为空，请先输入或编辑'); return; }
     saveToHistory();
@@ -5448,6 +5471,7 @@ ${bodyHtml}
         catch (e) { el.textContent = el.getAttribute('data-tex') || el.textContent; }
       }
     });
+    syncPdfPanelWithBeautify();
     syncPdfPreview();
     pdfModal.hidden = false;
     document.getElementById('pdf-close').focus();
