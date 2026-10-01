@@ -463,6 +463,8 @@ git push origin main
   .bz-acts button:hover { border-color: var(--accent); background: var(--accent-soft); }
   .bz-acts button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .bz-auto { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+  /* 本文件里凡是设了 display 的元素都要显式补 [hidden] 规则，否则 hidden 属性会被覆盖 */
+  .bz-auto[hidden] { display: none !important; }
   .bz-dismiss { border: none; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
   .bz-dismiss:hover { color: var(--ink); }
 ```
@@ -498,7 +500,9 @@ git push origin main
     if (beautifyUndo && beautifyUndo.docId === activeDocId && editor.innerHTML !== beautifyUndo.appliedHtml) {
       beautifyUndo = null;
     }
-    if (beautifyAsk === activeDocId && !beautifyUndo) {
+    // 守卫必须针对「当前文档」：beautifyUndo 是全局单槽，若只判断 !beautifyUndo，
+    // 则本次会话美化过任意一篇后，后续粘贴导入就再也不会弹询问条（核心功能静默失效）
+    if (beautifyAsk === activeDocId && (!beautifyUndo || beautifyUndo.docId !== activeDocId)) {
       bzMsg.textContent = '✨ 要一键美化这篇吗？';
       bzAutoWrap.hidden = false;
       const cfg = loadBeautifyCfg();
@@ -534,6 +538,15 @@ git push origin main
     showToast(bzAuto.checked ? '以后粘贴导入会自动套用「' + BEAUTIFY_PRESETS[cfg.preset].label + '」' : '已关闭自动套用');
   });
   document.getElementById('bz-dismiss').addEventListener('click', () => { beautifyAsk = null; hideBeautifyBar(); });
+  // 编辑后撤销入口必须失效：否则点撤销会覆盖掉用户刚输入的内容。
+  // 不比较 innerHTML —— 那是整篇序列化，长文档下每次按键都做代价太高；
+  // 程序化赋值不会触发 input 事件，所以「收到 input」即等价于用户改了内容。
+  editor.addEventListener('input', () => {
+    if (beautifyUndo && beautifyUndo.docId === activeDocId) {
+      beautifyUndo = null;
+      refreshBeautifyBar();
+    }
+  });
 ```
 
 - [ ] **Step 4: 粘贴导入后触发询问**
@@ -598,6 +611,24 @@ window.addEventListener('load', function () {
     undoBtn.click();
     t('撤销后无方正小标宋', /方正小标宋/.test(editor.innerHTML), false);
     t('撤销后浮条隐藏', document.getElementById('beautify-bar').hidden, true);
+    // 回归①：本次会话美化过任意一篇后，后续粘贴导入仍必须弹询问条
+    // （beautifyUndo 是全局单槽，守卫若只判断 !beautifyUndo 会让询问条永久被抑制）
+    editor.innerHTML = '<h1>先美化一篇</h1><p>正文</p>';
+    beautifyDoc('clean');
+    document.getElementById('btn-paste').click();
+    document.getElementById('paste-input').value = '# 第二篇\n\n正文';
+    document.getElementById('paste-confirm').click();
+    t('遗留记录不抑制询问', document.getElementById('beautify-bar').hidden, false);
+    t('第二篇文案为询问', document.getElementById('bz-msg').textContent.indexOf('要一键美化') !== -1, true);
+    // 回归②：已美化态下「以后自动套用」复选框必须隐藏（.bz-auto 的 display 会盖掉 [hidden]）
+    beautifyDoc('gov');
+    t('已美化态自动套用隐藏', document.getElementById('bz-auto-wrap').hidden, true);
+    t('已美化态自动套用不可见', getComputedStyle(document.getElementById('bz-auto-wrap')).display, 'none');
+    // 回归③：编辑后撤销入口必须失效，避免撤销覆盖用户刚输入的内容
+    t('编辑前撤销入口在', document.getElementById('beautify-bar').hidden, false);
+    editor.innerHTML += '<p>用户新输入</p>';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    t('编辑后浮条隐藏', document.getElementById('beautify-bar').hidden, true);
     var pre = document.createElement('pre');
     pre.textContent = 'ZZBEGIN\n' + out.join('\n') + '\nZZEND';
     document.body.appendChild(pre);
