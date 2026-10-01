@@ -308,7 +308,10 @@ git push origin main
   - `loadBeautifyCfg() -> { preset, auto }`、`saveBeautifyCfg(cfg)`
   - `beautifyDoc(presetKey) -> boolean`（作用于当前激活文档）
   - `beautifyUndoNow() -> boolean`
-  - `getBeautifyBarState() -> null | { mode: 'ask'|'applied', preset }`
+  - 变量 `beautifyUndo`（`{docId, originalHtml, appliedHtml}` 或 null）、`beautifyAsk`（待询问的 docId 或 null）
+
+> **本任务不引入任何 UI**，因此**不调用** `refreshBeautifyBar()`（它由 Task 3 定义）。
+> Task 3 会在定义该函数后，把调用补进 `beautifyDoc` / `beautifyUndoNow` 的末尾。
 
 - [ ] **Step 1: 实现设置持久化与套用/撤销**
 
@@ -353,7 +356,6 @@ git push origin main
     saveBeautifyCfg({ preset: presetKey, auto: cfg.auto });
     renderDocTabs();
     saveDocsState();
-    refreshBeautifyBar();
     const n = stat.emptyRemoved + stat.headings + stat.texts;
     showToast('已套用「' + BEAUTIFY_PRESETS[presetKey].label + '」' + (n ? '，清理了 ' + n + ' 处' : ''));
     return true;
@@ -369,7 +371,6 @@ git push origin main
     beautifyUndo = null;
     renderDocTabs();
     saveDocsState();
-    refreshBeautifyBar();
     showToast('已撤销美化');
     return true;
   }
@@ -555,9 +556,13 @@ git push origin main
   });
 ```
 
-- [ ] **Step 5: 切标签/切视图时刷新浮条**
+- [ ] **Step 5: 补上刷新调用点（Task 2 遗留）**
 
-在 `loadDoc()` 末尾与 `setView()` 的 `if (isEditor) {` 分支内各加一行：
+`refreshBeautifyBar()` 在本任务才定义，所以 Task 2 的 `beautifyDoc` / `beautifyUndoNow` 里**没有**这个调用。现在把它补进三处：
+
+1. `beautifyDoc()` 末尾（`showToast(...)` 之前）加一行 `refreshBeautifyBar();`
+2. `beautifyUndoNow()` 末尾（`showToast('已撤销美化');` 之前）加一行 `refreshBeautifyBar();`
+3. 在 `loadDoc()` 末尾与 `setView()` 的 `if (isEditor) {` 分支内各加一行：
 
 ```js
     refreshBeautifyBar();
