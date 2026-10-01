@@ -496,6 +496,25 @@
   .split-bar:hover::after, .split-bar.dragging::after { opacity: 1; background-color: var(--accent-soft); border-color: var(--accent); }
   .split-bar.dragging::after { width: 11px; height: 42px; box-shadow: 0 2px 16px rgba(193,18,31,.22); }
   #split-exit { font-size: 12px; padding: 5px 12px; }
+
+  /* 导入美化提示条（仅屏幕显示，打印时随其它界面元素一并隐藏） */
+  .beautify-bar {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 22px; z-index: 90;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    max-width: min(92vw, 760px); padding: 10px 16px;
+    background: var(--sheet); border: 1px solid var(--hairline-strong); border-radius: 999px;
+    box-shadow: 0 10px 34px rgba(27,26,23,.16); font-size: 13px; color: var(--ink-2);
+  }
+  .beautify-bar[hidden] { display: none !important; }
+  .bz-msg { font-weight: 600; color: var(--ink); }
+  .bz-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .bz-acts button { font-size: 12.5px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--hairline-strong); background: var(--paper); color: var(--ink); cursor: pointer; transition: border-color .18s var(--ease), background .18s var(--ease); }
+  .bz-acts button:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .bz-acts button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .bz-auto { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+  .bz-dismiss { border: none; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
+  .bz-dismiss:hover { color: var(--ink); }
+
   .focus-card { background: var(--sheet); border-radius: 16px; box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 16px 44px rgba(27,26,23,.09); padding: 28px 30px; }
   .focus-big { font-family: var(--font-display); font-size: 58px; font-weight: 600; text-align: center; color: var(--ink); letter-spacing: .01em; margin-bottom: 20px; }
   .focus-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
@@ -633,7 +652,7 @@
     .toprule, header.masthead, .tabbar, .docbar, .toolbar, footer.statusbar, .tooltip,
     .annot-sidebar, .nav-pane, .sel-bar, .dd, .modal-backdrop, .toast, .drop-overlay,
     .global-search, .ctx-menu, #history-import-input,
-    .zip-tool, .lib-tool, .map-tool, .focus-tool, .split-tool { display: none !important; }
+    .zip-tool, .lib-tool, .map-tool, .focus-tool, .split-tool, .beautify-bar { display: none !important; }
     .workspace, .stage { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; padding: 0 !important; background: #fff !important; }
     .editor {
       display: block !important; max-width: none !important; width: 100% !important;
@@ -1074,6 +1093,13 @@
     </div>
   </div>
 </section>
+
+<div class="beautify-bar" id="beautify-bar" hidden>
+  <span class="bz-msg" id="bz-msg">✨ 要一键美化这篇吗？</span>
+  <span class="bz-acts" id="bz-acts"></span>
+  <label class="bz-auto" id="bz-auto-wrap"><input type="checkbox" id="bz-auto"> 以后自动套用</label>
+  <button class="bz-dismiss" id="bz-dismiss" aria-label="关闭提示条">×</button>
+</div>
 
 <footer class="statusbar">
   <span id="status">0 字符 · 0 词 · 富文本</span>
@@ -1947,6 +1973,7 @@
     renderAllAnnots();
     renderDocTabs();
     saveDocsState();
+    refreshBeautifyBar();
   }
   function openNewDoc(html, file) {
     saveActiveDoc();
@@ -3511,6 +3538,13 @@
     openNewDoc(mdToHtml(text), null); // 开新标签，不覆盖当前文档
     saveDraft();
     pasteModal.hidden = true;
+    const cfg = loadBeautifyCfg();
+    if (cfg.auto) {
+      beautifyDoc(cfg.preset);          // 自动套用，仍显示可撤销的状态条
+    } else {
+      beautifyAsk = activeDocId;        // 询问
+      refreshBeautifyBar();
+    }
     showToast('已载入 Markdown 文本（新标签）');
   });
   document.addEventListener('keydown', (e) => { if (!pasteModal.hidden && e.key === 'Escape') pasteModal.hidden = true; });
@@ -3879,6 +3913,7 @@
       }
       // 回到编辑器时同步一次导航高亮（切走期间可能滚动过）
       try { highlightNavByScroll(); } catch (e) {}
+      refreshBeautifyBar();
     }
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
@@ -5220,6 +5255,7 @@ ${bodyHtml}
     renderDocTabs();
     saveDocsState();
     const n = stat.emptyRemoved + stat.headings + stat.texts;
+    refreshBeautifyBar();
     showToast('已套用「' + BEAUTIFY_PRESETS[presetKey].label + '」' + (n ? '，清理了 ' + n + ' 处' : ''));
     return true;
   }
@@ -5235,9 +5271,69 @@ ${bodyHtml}
     beautifyUndo = null;
     renderDocTabs();
     saveDocsState();
+    refreshBeautifyBar();
     showToast('已撤销美化');
     return true;
   }
+
+  const beautifyBar = document.getElementById('beautify-bar');
+  const bzMsg = document.getElementById('bz-msg');
+  const bzActs = document.getElementById('bz-acts');
+  const bzAuto = document.getElementById('bz-auto');
+  const bzAutoWrap = document.getElementById('bz-auto-wrap');
+
+  function bzPresetButtons(onPick) {
+    bzActs.innerHTML = '';
+    Object.keys(BEAUTIFY_PRESETS).forEach(k => {
+      const b = document.createElement('button');
+      b.textContent = BEAUTIFY_PRESETS[k].label;
+      b.addEventListener('click', () => onPick(k));
+      bzActs.appendChild(b);
+    });
+  }
+  function hideBeautifyBar() { beautifyBar.hidden = true; }
+
+  // 决定当前应显示哪种状态：ask（询问）/ applied（可撤销）/ 不显示
+  function refreshBeautifyBar() {
+    if (view !== 'editor') { hideBeautifyBar(); return; }
+    // 已编辑过 → 撤销入口失效
+    if (beautifyUndo && beautifyUndo.docId === activeDocId && editor.innerHTML !== beautifyUndo.appliedHtml) {
+      beautifyUndo = null;
+    }
+    if (beautifyAsk === activeDocId && !beautifyUndo) {
+      bzMsg.textContent = '✨ 要一键美化这篇吗？';
+      bzAutoWrap.hidden = false;
+      const cfg = loadBeautifyCfg();
+      bzAuto.checked = cfg.auto;
+      bzPresetButtons(k => beautifyDoc(k));
+      const skip = document.createElement('button');
+      skip.textContent = '不用了';
+      skip.addEventListener('click', () => { beautifyAsk = null; hideBeautifyBar(); });
+      bzActs.appendChild(skip);
+      beautifyBar.hidden = false;
+      return;
+    }
+    if (beautifyUndo && beautifyUndo.docId === activeDocId) {
+      const label = BEAUTIFY_PRESETS[docById(activeDocId)?.beautifyPreset]?.label || '';
+      bzMsg.textContent = '✓ 已美化' + (label ? '（' + label + '）' : '');
+      bzAutoWrap.hidden = true;
+      const undo = document.createElement('button');
+      undo.className = 'primary';
+      undo.textContent = '撤销';
+      undo.addEventListener('click', () => beautifyUndoNow());
+      bzPresetButtons(k => beautifyDoc(k));
+      bzActs.appendChild(undo);
+      beautifyBar.hidden = false;
+      return;
+    }
+    hideBeautifyBar();
+  }
+  bzAuto.addEventListener('change', () => {
+    const cfg = loadBeautifyCfg();
+    saveBeautifyCfg({ preset: cfg.preset, auto: bzAuto.checked });
+    showToast(bzAuto.checked ? '以后粘贴导入会自动套用「' + BEAUTIFY_PRESETS[cfg.preset].label + '」' : '已关闭自动套用');
+  });
+  document.getElementById('bz-dismiss').addEventListener('click', () => { beautifyAsk = null; hideBeautifyBar(); });
 
   // ===== PDF 预览弹窗（点「导出 PDF」打开，可调大小/参数；点「下载 PDF」才真正打印）=====
   const pdfModal = document.getElementById('pdf-modal');
