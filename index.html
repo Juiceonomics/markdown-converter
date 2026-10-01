@@ -512,6 +512,7 @@
   .bz-acts button:hover { border-color: var(--accent); background: var(--accent-soft); }
   .bz-acts button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .bz-auto { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+  .bz-auto[hidden] { display: none !important; }
   .bz-dismiss { border: none; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
   .bz-dismiss:hover { color: var(--ink); }
 
@@ -5300,7 +5301,7 @@ ${bodyHtml}
     if (beautifyUndo && beautifyUndo.docId === activeDocId && editor.innerHTML !== beautifyUndo.appliedHtml) {
       beautifyUndo = null;
     }
-    if (beautifyAsk === activeDocId && !beautifyUndo) {
+    if (beautifyAsk === activeDocId && (!beautifyUndo || beautifyUndo.docId !== activeDocId)) {
       bzMsg.textContent = '✨ 要一键美化这篇吗？';
       bzAutoWrap.hidden = false;
       const cfg = loadBeautifyCfg();
@@ -5334,6 +5335,16 @@ ${bodyHtml}
     showToast(bzAuto.checked ? '以后粘贴导入会自动套用「' + BEAUTIFY_PRESETS[cfg.preset].label + '」' : '已关闭自动套用');
   });
   document.getElementById('bz-dismiss').addEventListener('click', () => { beautifyAsk = null; hideBeautifyBar(); });
+
+  // 编辑后撤销入口必须失效：否则点撤销会覆盖掉用户刚输入的内容。
+  // 不比较 innerHTML —— 那是整篇序列化，长文档下每次按键都做代价太高；
+  // 程序化赋值不会触发 input 事件，所以「收到 input」即等价于用户改了内容。
+  editor.addEventListener('input', () => {
+    if (beautifyUndo && beautifyUndo.docId === activeDocId) {
+      beautifyUndo = null;
+      refreshBeautifyBar();
+    }
+  });
 
   // ===== PDF 预览弹窗（点「导出 PDF」打开，可调大小/参数；点「下载 PDF」才真正打印）=====
   const pdfModal = document.getElementById('pdf-modal');
