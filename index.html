@@ -5177,6 +5177,63 @@ ${bodyHtml}
     return { html: root.innerHTML, stat };
   }
 
+  const BEAUTIFY_CFG_KEY = 'folio.beautify';
+  const BEAUTIFY_DEFAULT_CFG = { preset: 'clean', auto: false };
+  function loadBeautifyCfg() {
+    let o = {};
+    try { o = JSON.parse(localStorage.getItem(BEAUTIFY_CFG_KEY)) || {}; } catch (e) {}
+    return {
+      preset: BEAUTIFY_PRESETS[o.preset] ? o.preset : BEAUTIFY_DEFAULT_CFG.preset,
+      auto: !!o.auto
+    };
+  }
+  function saveBeautifyCfg(cfg) {
+    if (!safeSet(BEAUTIFY_CFG_KEY, JSON.stringify(cfg))) warnStorageFull();
+  }
+
+  // 撤销状态：记录「最初原始 HTML」，换方案不覆盖，确保撤销回到未美化前
+  let beautifyUndo = null;   // { docId, originalHtml, appliedHtml }
+  let beautifyAsk = null;    // 待询问的 docId（仅粘贴导入后）
+
+  function beautifyDoc(presetKey) {
+    if (view !== 'editor') return false;
+    const d = docById(activeDocId);
+    if (!d) return false;
+    const current = editor.innerHTML;
+    if (!current.replace(/[\s　 ]+/g, '')) { showToast('内容为空，无法美化'); return false; }
+    // 已存在针对该文档的撤销记录时不覆盖「最初原始」
+    if (!beautifyUndo || beautifyUndo.docId !== d.id) {
+      beautifyUndo = { docId: d.id, originalHtml: current, appliedHtml: '' };
+    }
+    const { html, stat } = beautifyApply(current, presetKey);
+    d.html = html;
+    d.beautifyPreset = presetKey;
+    editor.innerHTML = html;
+    beautifyUndo.appliedHtml = html;
+    beautifyAsk = null;
+    const cfg = loadBeautifyCfg();
+    saveBeautifyCfg({ preset: presetKey, auto: cfg.auto });
+    renderDocTabs();
+    saveDocsState();
+    const n = stat.emptyRemoved + stat.headings + stat.texts;
+    showToast('已套用「' + BEAUTIFY_PRESETS[presetKey].label + '」' + (n ? '，清理了 ' + n + ' 处' : ''));
+    return true;
+  }
+
+  function beautifyUndoNow() {
+    if (!beautifyUndo) return false;
+    const d = docById(beautifyUndo.docId);
+    if (!d) return false;
+    d.html = beautifyUndo.originalHtml;
+    delete d.beautifyPreset;
+    if (activeDocId === beautifyUndo.docId && view === 'editor') editor.innerHTML = beautifyUndo.originalHtml;
+    beautifyUndo = null;
+    renderDocTabs();
+    saveDocsState();
+    showToast('已撤销美化');
+    return true;
+  }
+
   // ===== PDF 预览弹窗（点「导出 PDF」打开，可调大小/参数；点「下载 PDF」才真正打印）=====
   const pdfModal = document.getElementById('pdf-modal');
   const pdfPreview = document.getElementById('pdf-preview');
