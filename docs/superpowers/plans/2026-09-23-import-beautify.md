@@ -924,3 +924,38 @@ git push origin main
 - 美化过的文档，PDF 面板字号/行距置灰并提示
 - 导出 PDF 中**不含**任何界面元素（含新增的提示条）
 - `folio.beautify` 随备份导出/导入
+
+---
+
+## 附：实现完成后的遗留项（已由最终审查分诊）
+
+功能于 2026-10-01 全部实现完成，代码范围 `603efc1..fafb8b0`。逐任务审查累计记录以下 Minor，
+**最终全分支审查逐条分诊后判定均为「可不修」**，记录在此以免日后重复发现。
+
+### 判定为「可不修」
+
+| 遗留项 | 理由 |
+|---|---|
+| `tools/headless_check.py` 的失败判据只认行首 `^FAIL `；若用例用 `ERR ` 前缀上报真红会误判为通过 | 现有用例全部用 `t()` 输出 `PASS/FAIL `；且脚本对「未捕获结果」返回非零，异常仍会暴露 |
+| C6 映射表在「先降后升」序列仍可能跳级（`1,2,5,1,5` → `h1,h2,h3,h1,h3`） | **设计文档自身两条要求对该输入互斥**（同级同映射 vs 不跳级）；实现优先保证了同级同映射 |
+| 元素级操作（`bzRemoveEmptyBlocks`/`bzNormalizeHeadings`/排版循环）未排除 `pre`/`code` 子树 | markdown 派生 HTML 中 `pre` 内不会出现 `p/div/li/h*`，无实际暴露 |
+| `beautifyDoc` 未校验 `presetKey`（非法值会在已改状态后抛 TypeError） | 三处调用方均经 `BEAUTIFY_PRESETS` 校验，不可达 |
+| `beautifyUndoNow` 的 `mode` 切换无条件（撤销记录指向别的文档时也会切视图） | 浮条只在编辑器视图显示，UI 不可达 |
+| 测试覆盖缺口：`pre`/`code` 无 inline style、`stat` 三字段、`script`/`style` 跳过、未知 presetKey 回退 | 均非关键路径 |
+| `tools/case_menu.js` 的 `处于询问态` 断言名实不符（`bar.hidden` 在询问态与已美化态都为 false） | 同文件另有更强断言；不产生假通过 |
+| `tools/case_pdfpanel.js` 的「未美化时可选」恒真（空 diff 也过） | 「美化后置灰」「提示文案」两条是真断言 |
+| 未覆盖「美化→撤销→重开 PDF 面板应为可编辑」 | `syncPdfPanelWithBeautify` 在非美化分支会重置 `disabled=false`，逻辑已正确 |
+| `index.html` 非美化态 PDF 提示文案与静态 HTML 重复，改一处会漂移 | 仅维护性风险 |
+| 换级标题时 `nh.innerHTML = h.innerHTML` 丢失原 `style`/`id` 属性 | 仅当级别变化时发生，且仅影响带内联属性的标题 |
+| 浮条位置 `bottom: 22px` 与设计文档「编辑器顶部浮出」措辞不符 | 视觉选择，底部悬浮更少遮挡正文 |
+| 单槽 `beautifyUndo`：美化 A 后再美化 B 会覆盖撤销槽 | 计划即按单槽设计，符合 YAGNI |
+
+### 已修（记录备查）
+
+- `root.contains(el)` 守卫修 `stat.emptyRemoved` 嵌套重复计数（`isConnected` 在游离 root 下恒为 false，会误伤）
+- 询问分支守卫改为针对当前文档（原 `!beautifyUndo` 会被别的文档遗留的全局单槽抑制）
+- `.bz-auto[hidden]` 规则（`display` 会覆盖 UA 的 `[hidden]`）
+- 编辑后作废撤销入口（editor `input` 监听，不比较 `innerHTML` 以免长文档整篇序列化）
+- 菜单开关与浮条复选框双向同步
+- 浮条在非编辑器视图隐藏 + `beautifyUndoNow` 视图守卫 + `closeDoc` 刷新
+- auto 模式 toast 顺序（保住「清理了 N 处」反馈）
