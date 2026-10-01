@@ -22,6 +22,13 @@ window.addEventListener('load', function () {
     t('源码模式下已离开源码视图', mode, 'wysiwyg');
     t('源码模式下 d.html 未被覆盖', /方正小标宋/.test(docById(activeDocId).html), true);
     beautifyUndoNow();
+    // 回归：换方案后撤销必须回到「最初原始」，而不是回到上一个方案的结果
+    editor.innerHTML = '<h1>原始标题</h1><p>原始正文</p>';
+    var originalHtml = editor.innerHTML;
+    beautifyDoc('clean');
+    beautifyDoc('gov');            // 换方案，不得覆盖最初原始
+    beautifyUndoNow();
+    t('换方案后撤销回到最初原始', editor.innerHTML === originalHtml, true);
     var pre = document.createElement('pre');
     pre.textContent = 'ZZBEGIN\n' + out.join('\n') + '\nZZEND';
     document.body.appendChild(pre);

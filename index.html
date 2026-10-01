@@ -2016,6 +2016,7 @@
       editor.innerHTML = '';
       currentFileBase = null;
       hideDocbar();
+      refreshBeautifyBar();   // 空状态下浮条不应残留
     } else if (wasActive) {
       const next = docs[Math.min(idx, docs.length - 1)];
       loadDoc(next);
@@ -3555,6 +3556,7 @@
     openNewDoc(mdToHtml(text), null); // 开新标签，不覆盖当前文档
     saveDraft();
     pasteModal.hidden = true;
+    showToast('已载入 Markdown 文本（新标签）');   // 先提示；auto 模式下随后的美化提示（含清理计数）才是用户最终看到的那条
     const cfg = loadBeautifyCfg();
     if (cfg.auto) {
       beautifyDoc(cfg.preset);          // 自动套用，仍显示可撤销的状态条
@@ -3562,7 +3564,6 @@
       beautifyAsk = activeDocId;        // 询问
       refreshBeautifyBar();
     }
-    showToast('已载入 Markdown 文本（新标签）');
   });
   document.addEventListener('keydown', (e) => { if (!pasteModal.hidden && e.key === 'Escape') pasteModal.hidden = true; });
 
@@ -3930,7 +3931,6 @@
       }
       // 回到编辑器时同步一次导航高亮（切走期间可能滚动过）
       try { highlightNavByScroll(); } catch (e) {}
-      refreshBeautifyBar();
     }
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
@@ -3941,6 +3941,8 @@
     else if (v === 'map') { renderMap(); status.textContent = '思维导图 · 由当前文档自动生成'; }
     else if (v === 'split') { status.textContent = '双文档对照 · 左主右副'; }
     else { renderFocus(); status.textContent = '专注 · 计时 / 累计'; }
+    // 浮条为 position:fixed，必须随视图刷新——非编辑器视图下 refreshBeautifyBar 会将其隐藏
+    refreshBeautifyBar();
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
@@ -5279,6 +5281,9 @@ ${bodyHtml}
 
   function beautifyUndoNow() {
     if (!beautifyUndo) return false;
+    // 撤销只能在编辑器视图进行：非编辑器视图下 editor 不显示，
+    // 后续 saveDocsState→saveActiveDoc 会取到未更新的 editor.innerHTML 把 d.html 冲回美化结果
+    if (view !== 'editor') return false;
     const d = docById(beautifyUndo.docId);
     if (!d) return false;
     if (mode === 'source') setMode('wysiwyg');   // 同上：避免撤销结果被后续保存覆盖
