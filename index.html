@@ -5343,6 +5343,7 @@ ${bodyHtml}
   bzAuto.addEventListener('change', () => {
     const cfg = loadBeautifyCfg();
     saveBeautifyCfg({ preset: cfg.preset, auto: bzAuto.checked });
+    updateBzAutoToggle();
     showToast(bzAuto.checked ? '以后粘贴导入会自动套用「' + BEAUTIFY_PRESETS[cfg.preset].label + '」' : '已关闭自动套用');
   });
   document.getElementById('bz-dismiss').addEventListener('click', () => { beautifyAsk = null; hideBeautifyBar(); });
@@ -5366,6 +5367,7 @@ ${bodyHtml}
       const cfg = loadBeautifyCfg();
       saveBeautifyCfg({ preset: cfg.preset, auto: !cfg.auto });
       updateBzAutoToggle();
+      refreshBeautifyBar();
       showToast(!cfg.auto ? '已开启：粘贴导入时自动套用' : '已关闭自动套用');
       closeAllDDs();
     }
