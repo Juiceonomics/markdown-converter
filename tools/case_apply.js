@@ -13,6 +13,15 @@ window.addEventListener('load', function () {
     beautifyUndoNow();
     t('撤销后一致', editor.innerHTML === before, true);
     t('撤销后无标记', docById(activeDocId).beautifyPreset, undefined);
+    // 源码模式下套用也必须真正生效（不切回富文本会被 saveDocsState 覆盖掉）
+    setMode('source');
+    editor.innerHTML = '<h1>源码模式</h1><p>正文</p>';
+    source.value = '# 源码模式\n\n正文';
+    beautifyDoc('gov');
+    t('源码模式下已套用', /方正小标宋/.test(editor.innerHTML), true);
+    t('源码模式下已离开源码视图', mode, 'wysiwyg');
+    t('源码模式下 d.html 未被覆盖', /方正小标宋/.test(docById(activeDocId).html), true);
+    beautifyUndoNow();
     var pre = document.createElement('pre');
     pre.textContent = 'ZZBEGIN\n' + out.join('\n') + '\nZZEND';
     document.body.appendChild(pre);

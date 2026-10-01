@@ -5199,6 +5199,10 @@ ${bodyHtml}
     if (view !== 'editor') return false;
     const d = docById(activeDocId);
     if (!d) return false;
+    // 源码模式下编辑器是隐藏的、内容在 source.value：
+    // 不切回富文本的话，后续 saveDocsState→saveActiveDoc 会用 mdToHtml(source.value)
+    // 把刚写好的美化结果覆盖掉（表现为「提示已套用但实际没生效」）
+    if (mode === 'source') setMode('wysiwyg');
     const current = editor.innerHTML;
     if (!current.replace(/[\s　 ]+/g, '')) { showToast('内容为空，无法美化'); return false; }
     // 已存在针对该文档的撤销记录时不覆盖「最初原始」
@@ -5224,6 +5228,7 @@ ${bodyHtml}
     if (!beautifyUndo) return false;
     const d = docById(beautifyUndo.docId);
     if (!d) return false;
+    if (mode === 'source') setMode('wysiwyg');   // 同上：避免撤销结果被后续保存覆盖
     d.html = beautifyUndo.originalHtml;
     delete d.beautifyPreset;
     if (activeDocId === beautifyUndo.docId && view === 'editor') editor.innerHTML = beautifyUndo.originalHtml;
