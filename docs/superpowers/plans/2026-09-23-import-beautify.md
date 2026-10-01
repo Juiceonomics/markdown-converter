@@ -428,7 +428,7 @@ git push origin main
 
 **Interfaces:**
 - Consumes: `beautifyDoc`、`beautifyUndoNow`、`getBeautifyBarState` 所需的 `beautifyUndo` / `beautifyAsk`
-- Produces: `refreshBeautifyBar()`、`askBeautifyForPasted()`；元素 id `#beautify-bar`
+- Produces: `refreshBeautifyBar()`、`hideBeautifyBar()`、`bzPresetButtons(onPick)`；元素 id `#beautify-bar`（询问状态由 `beautifyAsk` 变量驱动，不另设 `askBeautifyForPasted` 函数）
 
 - [ ] **Step 1: 加浮条 HTML**
 
