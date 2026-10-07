@@ -214,6 +214,12 @@
     outline: none;
     font-family: var(--font-serif); font-size: 16px; line-height: 1.85; color: var(--ink);
   }
+  /* 长算式不再撑破纸面：KaTeX 的显示公式（.math-block）无法折行，
+     一条长公式会直接顶出白纸。实测：40 项的多项式公式内容宽 2258px、编辑器仅 719px，
+     横向溢出 1036px。给它一个横向滚动的容器，公式留在纸面内、可左右滚动查看。
+     实测确认：长文本 / 宽表格 / 宽图片 / 长代码行本来就不会溢出，
+     故不额外加 overflow-wrap / word-break / img max-width 等冗余规则。 */
+  .editor .math-block { max-width: 100%; overflow-x: auto; }
   .editor:focus { box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 18px 48px rgba(27,26,23,.10), 0 0 0 2px var(--accent-soft); }
   .editor:empty::before { content: '在这里粘贴 Markdown，或直接开始编辑…'; color: var(--muted); }
   .source {
@@ -507,6 +513,8 @@
     box-shadow: 0 10px 34px rgba(27,26,23,.16); font-size: 13px; color: var(--ink-2);
   }
   .beautify-bar[hidden] { display: none !important; }
+  /* 清空撤销条：与美化条同款样式，但抬高一点，避免两条同时出现时叠在一起 */
+  .clear-bar { bottom: 74px; }
   .bz-msg { font-weight: 600; color: var(--ink); }
   .bz-acts { display: flex; gap: 6px; flex-wrap: wrap; }
   .bz-acts button { font-size: 12.5px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--hairline-strong); background: var(--paper); color: var(--ink); cursor: pointer; transition: border-color .18s var(--ease), background .18s var(--ease); }
@@ -1120,6 +1128,11 @@
   <span class="bz-acts" id="bz-acts"></span>
   <label class="bz-auto" id="bz-auto-wrap"><input type="checkbox" id="bz-auto"> 以后自动套用</label>
   <button class="bz-dismiss" id="bz-dismiss" aria-label="关闭提示条">×</button>
+</div>
+<div class="beautify-bar clear-bar" id="clear-bar" hidden>
+  <span class="bz-msg">🗑 已清空</span>
+  <span class="bz-acts"><button id="clear-undo" class="primary">撤销清空</button></span>
+  <button class="bz-dismiss" id="clear-dismiss" aria-label="关闭提示条">×</button>
 </div>
 
 <footer class="statusbar">
@@ -1995,6 +2008,7 @@
     renderDocTabs();
     saveDocsState();
     refreshBeautifyBar();
+    refreshClearBar();   // 切了文档，清空撤销入口应失效
   }
   function openNewDoc(html, file) {
     saveActiveDoc();
@@ -2013,6 +2027,9 @@
     renderDocTabs();
     showDocbar();
     saveDocsState();
+    // 导入即留档：即使之后一直没保存，也能从「历史」里找回这次导入的内容。
+    // 空格内容会被 saveToHistory 自身的空内容判断跳过；重复内容由它的去重跳过。
+    saveToHistory();
   }
   function closeDoc(id) {
     const idx = docs.findIndex(d => d.id === id);
@@ -2460,18 +2477,61 @@
     openNewDoc(mdToHtml(SAMPLE), null);
   });
 
+  // 清空是可撤销的：清空前先把内容留档（写进历史记录），清空后给一条「撤销清空」提示条。
+  // 留档是双保险 —— 即使错过了撤销窗口，也能从「历史」里把内容找回来。
+  let clearUndo = null; // { docId, html, file, title }
   document.getElementById('btn-clear').addEventListener('click', () => {
+    if (contentEmpty()) { showToast('内容已经是空的'); return; }
+    saveToHistory(); // 必须在清空之前调用：它取的就是当前编辑器里的内容
+    const d = docById(activeDocId);
+    // 用 getExportHtml() 取「实时内容」，不能用 d.html —— 那是上次保存时的快照，
+    // 用户刚输入还没触发自动保存时，d.html 是旧的，撤销会恢复成错误的内容。
+    clearUndo = d ? { docId: d.id, html: getExportHtml(), file: currentFileBase, title: d.title } : null;
     editor.innerHTML = '';
     source.value = '';
     currentFileBase = null;
-    localStorage.removeItem('folio.draft');
+    safeRemove(DRAFT_KEY);
     // 同步当前标签并持久化，避免刷新后内容"复活"
-    const d = docById(activeDocId);
     if (d) { d.html = ''; d.file = null; d.title = '未命名文档'; }
     saveDocsState();
     updateStatus();
     renderAllAnnots();
+    renderDocTabs();
+    refreshClearBar();
+    showToast('已清空，可在下方撤销');
   });
+
+  const clearBar = document.getElementById('clear-bar');
+  function refreshClearBar() {
+    if (!clearUndo) { clearBar.hidden = true; return; }
+    // 切换了文档、或已经开始重新输入 → 撤销入口失效
+    if (clearUndo.docId !== activeDocId) { clearUndo = null; clearBar.hidden = true; return; }
+    const d = docById(activeDocId);
+    if (d && d.html && d.html.replace(/[\s　 ]+/g, '')) { clearUndo = null; clearBar.hidden = true; return; }
+    clearBar.hidden = view !== 'editor';
+  }
+  function undoClear() {
+    if (!clearUndo) return false;
+    const d = docById(clearUndo.docId);
+    if (!d) { clearUndo = null; refreshClearBar(); return false; }
+    d.html = clearUndo.html;
+    d.file = clearUndo.file || null;
+    d.title = clearUndo.title || '未命名文档';
+    if (activeDocId === clearUndo.docId && view === 'editor') {
+      editor.innerHTML = clearUndo.html;
+      currentFileBase = clearUndo.file || null;
+      updateStatus();
+      renderAllAnnots();
+    }
+    clearUndo = null;
+    renderDocTabs();
+    saveDocsState();
+    refreshClearBar();
+    showToast('已撤销清空');
+    return true;
+  }
+  document.getElementById('clear-undo').addEventListener('click', undoClear);
+  document.getElementById('clear-dismiss').addEventListener('click', () => { clearUndo = null; refreshClearBar(); });
 
   // ===== 历史记录 & 草稿（localStorage）=====
   const HISTORY_KEY = 'folio.history';
@@ -3940,6 +4000,7 @@
       }
       // 回到编辑器时同步一次导航高亮（切走期间可能滚动过）
       try { highlightNavByScroll(); } catch (e) {}
+      refreshClearBar(); // 非编辑器视图下清空撤销条应隐藏，回到编辑器再显示
     }
     else if (v === 'zip') status.textContent = '压缩工具 · 打包 / 解压';
     else if (v === 'imgpdf') status.textContent = '图片工具 · 转 PDF / 压缩';
@@ -5374,6 +5435,11 @@ ${bodyHtml}
     if (beautifyUndo && beautifyUndo.docId === activeDocId) {
       beautifyUndo = null;
       refreshBeautifyBar();
+    }
+    // 同理：清空后又开始输入，就不再提供「撤销清空」（否则会覆盖刚输入的内容）
+    if (clearUndo && clearUndo.docId === activeDocId) {
+      clearUndo = null;
+      refreshClearBar();
     }
   });
 
