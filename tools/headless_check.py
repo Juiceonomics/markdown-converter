@@ -24,6 +24,12 @@ def run(inject_js: str) -> str:
     try:
         res = subprocess.run(
             [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox",
+             # 固定一个真实的桌面窗口尺寸。默认 800x600 下 .stage 的内容宽只有约 240px，
+             # 纸面缩放的宽度断言在任何档位都会退化成同一个数（永远通过的空转）。
+             # 1440x900 也不够：两侧栏 520 + 内外边距把舞台内容宽压到 839px，
+             # 仍然小于纸的 840px 基准宽 —— 所有档位都被 max-width 截在同一个数上。
+             # 1920x1080 才有约 1320px，够验证到 150% 这一档不被截断。
+             "--window-size=1920,1080",
              "--virtual-time-budget=9000", "--dump-dom",
              "file:///" + hp.replace("\\", "/")],
             capture_output=True, timeout=180, text=True,

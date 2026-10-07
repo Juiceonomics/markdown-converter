@@ -232,6 +232,18 @@
     display: block;
   }
 
+  /* 纸面自主缩放：只放大/缩小这张白纸，不动导航窗格 / 工具栏 / 标签栏
+     （浏览器整页缩放会把界面外壳一起放大，反而更不好读）。
+     用 CSS zoom 而不是 transform: scale()：zoom 参与布局，滚动高度与
+     getBoundingClientRect() 全部自洽；transform 不参与布局，会需要手工重算滚动高度，
+     非整数倍还会糊字，并给 position:fixed 后代（#sel-bar / #tooltip）造包含块。
+     实测（1440×900）：纸的渲染宽度精确等于 min(840 × z, 舞台内容宽)，
+     margin:0 auto 的居中正常解析，纵向 scrollHeight 随 z 增长。
+     只作用于主编辑器的纸面；分屏的 .editor.split-editor 不缩放 —— 那两块本就按
+     并排宽度铺满，缩放会破坏对照视图。
+     抽成自定义属性是为了打印时能一行复位（见 @media print）。 */
+  #stage > .editor, #stage > .source { zoom: var(--folio-zoom, 1); }
+
   /* 富文本排版 */
   .editor h1, .editor h2, .editor h3, .editor h4 { font-family: var(--font-display); line-height: 1.3; margin: 1.3em 0 .55em; color: var(--ink); }
   .editor h1 { font-size: 2em; font-weight: 700; border-bottom: 2px solid var(--ink); padding-bottom: .35em; }
@@ -262,7 +274,24 @@
     padding: 7px 20px; font-size: 12px; color: var(--muted);
     border-top: 1px solid var(--hairline); background: var(--sheet); flex: 0 0 auto;
   }
-  footer.statusbar .hint { color: var(--muted); }
+  /* 状态栏是可伸缩的 flex 行：#status 与缩放控件固定宽度，右侧长提示允许省略，
+     否则窗口变窄时控件会被提示文字挤变形 */
+  footer.statusbar .hint { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  footer.statusbar #status { flex: 0 0 auto; }
+
+  /* 纸面缩放控件 —— 沿用 .bz-acts 的胶囊按钮语言 */
+  .zoom-ctl { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .zoom-ctl[hidden] { display: none !important; }
+  .zoom-ctl button {
+    font-size: 12px; font-weight: 600; line-height: 1; padding: 4px 9px;
+    border-radius: 999px; border: 1px solid var(--hairline-strong);
+    background: var(--sheet); color: var(--ink-2); cursor: pointer;
+    transition: background .18s var(--ease), border-color .18s var(--ease), color .18s var(--ease);
+  }
+  .zoom-ctl button:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .zoom-ctl button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .zoom-ctl button:active { transform: translateY(1px); }
+  #zoom-reset { min-width: 54px; font-variant-numeric: tabular-nums; }
 
   /* 自定义 tooltip */
   .tooltip {
@@ -674,6 +703,11 @@
     .editor img { max-width: 100% !important; height: auto; }
     .editor:empty::before { content: none; }
     .source { display: none !important; }
+
+    /* 屏幕上的纸面缩放绝不能带进打印：放大后的正文会横向溢出、被页边裁掉，
+       还会和 applyPdfPrintStyle() 注入的字号叠加。
+       用 !important 压掉 JS 写在 .stage 上的内联值（重要声明优先于普通内联样式）。 */
+    .stage, .stage > .editor, .stage > .source { --folio-zoom: 1 !important; }
 
     /* 屏蔽「浏览器扩展注入的浮层」：扩展一般把自己的浮层挂在 body 下，
        这里把「除 .workspace 以外的 body 直接子元素」整体移出打印，
@@ -1137,6 +1171,11 @@
 
 <footer class="statusbar">
   <span id="status">0 字符 · 0 词 · 富文本</span>
+  <span class="zoom-ctl" id="zoom-ctl" role="group" aria-label="纸面缩放">
+    <button id="zoom-out" title="缩小纸面（Ctrl + -）" aria-label="缩小纸面">−</button>
+    <button id="zoom-reset" title="恢复 100%（Ctrl + 0）">100%</button>
+    <button id="zoom-in" title="放大纸面（Ctrl + =）" aria-label="放大纸面">＋</button>
+  </span>
   <span class="hint">字号 / 颜色 / 高亮会保留在导出文件中；切换「Markdown 源码」时以内联 HTML 保留</span>
 </footer>
 
@@ -1693,6 +1732,72 @@
     const words = txt.trim() ? txt.trim().split(/\s+/).length : 0;
     status.textContent = chars + ' 字符 · ' + words + ' 词 · ' + (mode === 'wysiwyg' ? '富文本' : 'Markdown 源码');
   }
+
+  // ===== 纸面自主缩放 =====
+  // 只缩放中间那张白纸（见 CSS #stage > .editor），导航窗格 / 工具栏 / 标签栏不受影响。
+  const ZOOM_KEY = 'folio.zoom';
+  const ZOOM_DEFAULT = 1, ZOOM_MIN = 0.5, ZOOM_MAX = 3, ZOOM_STEP = 0.1;
+  const zoomStage = document.querySelector('.stage');
+  // 滚轮绑在整个工作区而不是只绑 .stage：导航窗格 / 批注栏上方的 Ctrl+滚轮
+  // 若漏给它，会掉回浏览器的整页缩放 —— 同一个视图里两种行为，很突兀。
+  const zoomArea = document.getElementById('workspace');
+  const zoomCtl = document.getElementById('zoom-ctl');
+  const zoomResetBtn = document.getElementById('zoom-reset');
+  let zoomLevel = ZOOM_DEFAULT;
+
+  // 取一位小数：抹掉 0.1 反复累加产生的浮点漂移（0.7000000000000001 → 0.7）
+  function roundZoom(z) { return Math.round(z * 10) / 10; }
+  function clampZoom(z) {
+    if (typeof z !== 'number' || !isFinite(z)) return ZOOM_DEFAULT;
+    return roundZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+  }
+  function loadZoomCfg() {
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem(ZOOM_KEY)); } catch (e) {}
+    // 脏值（"abc" / null / 99 / NaN）一律回落 100%，不写入也不报错
+    return (typeof v === 'number' && isFinite(v) && v >= ZOOM_MIN && v <= ZOOM_MAX)
+      ? roundZoom(v) : ZOOM_DEFAULT;
+  }
+  function saveZoomCfg() {
+    if (!safeSet(ZOOM_KEY, JSON.stringify(zoomLevel))) warnStorageFull();
+  }
+  function applyZoom() {
+    zoomStage.style.setProperty('--folio-zoom', zoomLevel);
+    zoomResetBtn.textContent = Math.round(zoomLevel * 100) + '%';
+  }
+  function setZoom(z) {
+    const next = clampZoom(z);
+    // 已经在边界上（继续点「＋」）也要刷新一次 UI：状态与读数不能脱节
+    if (next !== zoomLevel) { zoomLevel = next; saveZoomCfg(); }
+    applyZoom();
+  }
+  function refreshZoomCtl() { zoomCtl.hidden = view !== 'editor'; }
+
+  document.getElementById('zoom-in').addEventListener('click', () => setZoom(zoomLevel + ZOOM_STEP));
+  document.getElementById('zoom-out').addEventListener('click', () => setZoom(zoomLevel - ZOOM_STEP));
+  zoomResetBtn.addEventListener('click', () => setZoom(ZOOM_DEFAULT));
+
+  // Ctrl + = / - / 0：接管浏览器的整页缩放 —— 用户要的正是「只缩放纸面」。
+  // 只在本视图生效，其余视图把快捷键还给浏览器。
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || view !== 'editor') return;
+    const k = e.key;
+    if (k === '=' || k === '+') { e.preventDefault(); setZoom(zoomLevel + ZOOM_STEP); }
+    else if (k === '-' || k === '_') { e.preventDefault(); setZoom(zoomLevel - ZOOM_STEP); }
+    else if (k === '0') { e.preventDefault(); setZoom(ZOOM_DEFAULT); }
+  });
+
+  // Ctrl + 滚轮（Windows 精密触控板双指捏合走的也是这条路径）。
+  // 必须 passive:false，否则 preventDefault() 无效、浏览器整页缩放会同时触发。
+  zoomArea.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !e.deltaY || view !== 'editor') return; // 普通滚轮照常滚动
+    e.preventDefault();
+    setZoom(zoomLevel + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+  }, { passive: false });
+
+  zoomLevel = loadZoomCfg();
+  applyZoom();
+  refreshZoomCtl();
 
   function execLive(cmd, val) { document.execCommand(cmd, false, val || null); updateStatus(); }
   function execRestored(cmd, val) { editor.focus(); restoreSelection(); document.execCommand(cmd, false, val || null); updateStatus(); }
@@ -4013,6 +4118,8 @@
     else { renderFocus(); status.textContent = '专注 · 计时 / 累计'; }
     // 浮条为 position:fixed，必须随视图刷新——非编辑器视图下 refreshBeautifyBar 会将其隐藏
     refreshBeautifyBar();
+    // 缩放控件在状态栏里，而状态栏在所有视图下都常驻，必须显式随视图隐藏
+    refreshZoomCtl();
   }
   document.querySelectorAll('.view-tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
 
