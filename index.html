@@ -667,10 +667,12 @@
     .editor:empty::before { content: none; }
     .source { display: none !important; }
 
-    /* 可见性硬化：用 visibility（而非 display）压住浏览器扩展注入的浮层。
-       扩展元素常带 position:fixed + 极高 z-index，display 规则容易被其自身样式盖过；
+    /* 可见性硬化：这是导出 PDF 屏蔽「浏览器扩展注入浮层」的核心手段。
+       扩展元素常带 position:fixed + 极高 z-index，用 display 隐藏容易被其自身样式盖过；
        而 visibility 只要不被子孙显式改回 visible 就一定生效，且不依赖选择器命中它们。
-       正常路径打印的是离屏 iframe（见 printViaIframe），这里是 Ctrl+P 走主文档时的兜底。 */
+       先全隐、再只把正文子树显回来 —— 不在此子树内的注入元素必然被隐掉。
+       注：这几条只能放在 @media print 里。曾经把打印改成「离屏 iframe」以求更强隔离，
+       但那条路径在真实浏览器里产出空白、且无头环境无法验证，已回退到本方案。 */
     body * { visibility: hidden !important; }
     .workspace, .workspace * { visibility: visible !important; }
     body > *:not(.workspace) { display: none !important; }
@@ -5455,117 +5457,6 @@ ${bodyHtml}
       '}';
   }
 
-  // ===== 离屏 iframe 打印 =====
-  // 为什么不用 window.print() 打印本页：那会打印整个页面，浏览器扩展注入的浮层
-  //（position:fixed + 极高 z-index）不受本应用样式管辖，会被一起打进 PDF 并遮挡正文。
-  // 改为把「正文 + 打印样式」写进一个离屏 iframe 再打印它 —— 扩展注入的是主文档，
-  // iframe 里天然没有它们（连注入到正文区内部的也一并排除）。
-  // 从样式文本中剥掉所有 @media 块（花括号配对，能处理嵌套规则）。
-  // 为什么必须剥：主文档的 @media print 里写着针对「应用自身 DOM 结构」的隐藏规则，
-  // 例如 `body > *:not(.workspace){ display:none !important }` —— 打印文档的 body 直接子元素
-  // 是 .print-root 而非 .workspace，这条会把整块正文判为 display:none，导致打印全空白。
-  function stripAtMediaBlocks(css) {
-    let out = '', i = 0;
-    while (i < css.length) {
-      const at = css.indexOf('@media', i);
-      if (at === -1) { out += css.slice(i); break; }
-      const brace = css.indexOf('{', at);
-      if (brace === -1) { out += css.slice(i); break; }
-      out += css.slice(i, at);
-      let depth = 0, j = brace;
-      for (; j < css.length; j++) {
-        if (css[j] === '{') depth++;
-        else if (css[j] === '}') { depth--; if (depth === 0) { j++; break; } }
-      }
-      i = j; // 跳过整个 @media 块
-    }
-    return out;
-  }
-
-  function buildPrintDocHtml(title) {
-    const o = readPdfOpts();
-    // 复制主文档的样式：内联 <style>（应用自身排版）+ 外链样式表（KaTeX / 代码高亮）。
-    // 内联样式里的 @media 块必须剥掉 —— 它们是按应用自身 DOM 结构写的，会误伤打印文档（见上）。
-    const inlineCss = stripAtMediaBlocks(
-      Array.from(document.querySelectorAll('style')).map(s => s.textContent).join('\n')
-    );
-    const links = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
-      .map(l => '<link rel="stylesheet" href="' + l.getAttribute('href') + '">').join('\n');
-    const printCss = [
-      '@page{ size:' + o.page + '; margin:' + o.margin + '; }',
-      'html,body{ height:auto !important; min-height:0; overflow:visible !important; }',
-      'body{ display:block !important; background:#fff !important; margin:0; }',
-      // 可见性硬化：用 visibility（而非 display）能压住任何定位/z-index 的注入元素。
-      // 先全隐、再只显正文子树 —— 万一某个扩展也注入到了 iframe，同样会被挡掉。
-      'body *{ visibility:hidden !important; }',
-      '.print-root, .print-root *{ visibility:visible !important; }',
-      '.print-root{ background:#fff; }',
-      '.print-root .editor{ display:block !important; max-width:none !important; width:100% !important;'
-        + ' margin:0 !important; padding:0 !important; box-shadow:none !important;'
-        + ' min-height:0 !important; border-radius:0 !important; word-break:break-word;'
-        + ' font-size:' + o.font + ' !important; line-height:' + o.line + ' !important; }',
-      '.print-root .editor pre{ white-space:pre-wrap !important; word-break:break-word; }',
-      '.print-root .editor table{ table-layout:fixed !important; width:100% !important; word-break:break-word; }',
-      '.print-root .editor img{ max-width:100% !important; height:auto; }',
-      '.print-root .editor > *:first-child{ margin-top:0 !important; }',
-      // 分页质量（与主样式的打印规则保持一致）
-      '.print-root .editor h1,.print-root .editor h2,.print-root .editor h3,.print-root .editor h4,.print-root .editor h5,.print-root .editor h6{'
-        + ' break-after:avoid-page; page-break-after:avoid; break-inside:avoid; }',
-      '.print-root .editor img,.print-root .editor figure,.print-root .editor .math-block,.print-root .editor blockquote{'
-        + ' break-inside:avoid; page-break-inside:avoid; }',
-      '.print-root .editor tr,.print-root .editor li{ break-inside:avoid; page-break-inside:avoid; }',
-      '.print-root .editor p{ orphans:3; widows:3; }',
-      '.print-root .editor ul,.print-root .editor ol{ orphans:2; widows:2; }',
-      '.print-root .editor hr{ break-after:avoid; page-break-after:avoid; }'
-    ].join('\n');
-    return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
-      + '<title>' + escapeHtml(title) + '</title>'
-      // <base> 让 KaTeX 字体、代码高亮等相对路径在 iframe 里也能正确解析
-      + '<base href="' + escapeHtml(document.baseURI) + '">'
-      + links + '<style>' + inlineCss + '</style><style>' + printCss + '</style>'
-      + '</head><body><div class="print-root"><div class="editor">'
-      + getExportHtml()
-      + '</div></div></body></html>';
-  }
-
-  function printViaIframe(title) {
-    const iframe = document.createElement('iframe');
-    iframe.setAttribute('aria-hidden', 'true');
-    // 用极小的尺寸而非 display:none —— 完全隐藏的 iframe 在部分浏览器里不会被打印
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none;';
-    document.body.appendChild(iframe);
-    const doc = iframe.contentDocument;
-    doc.open();
-    doc.write(buildPrintDocHtml(title));
-    doc.close();
-
-    let printed = false;
-    const cleanup = () => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe); };
-    const doPrint = () => {
-      if (printed) return;
-      printed = true;
-      try {
-        iframe.contentWindow.focus();
-        iframe.contentWindow.print(); // 打印的是这个 iframe 的文档，不含主页面
-      } catch (e) {
-        showToast('打印失败，请重试');
-      } finally {
-        setTimeout(cleanup, 1000); // 打印对话框关闭后回收
-      }
-    };
-    // 必须等样式表加载完、字体就绪再打印，否则会打出没有排版的输出；
-    // 同时加超时兜底，避免某个资源卡住导致永远不弹打印框。
-    const waits = Array.from(doc.querySelectorAll('link[rel="stylesheet"]')).map(l => new Promise(res => {
-      if (l.sheet) return res();
-      l.addEventListener('load', res, { once: true });
-      l.addEventListener('error', res, { once: true });
-    }));
-    const fontsReady = (doc.fonts && doc.fonts.ready) ? doc.fonts.ready.catch(() => {}) : Promise.resolve();
-    Promise.race([
-      Promise.all(waits.concat([fontsReady])),
-      new Promise(res => setTimeout(res, 3000))
-    ]).then(() => setTimeout(doPrint, 50)); // 用定时器而非 rAF：rAF 在标签页失焦时会被节流甚至不触发
-  }
 
   // 美化用绝对字号，内联样式优先级高于面板的 .editor{font-size}，
   // 因此美化过的文档把「字号/行距」置灰并说明，避免用户以为改了没生效
@@ -5608,12 +5499,18 @@ ${bodyHtml}
   pdfModal.addEventListener('mousedown', (e) => { if (e.target === pdfModal) closePdfModal(); });
   document.addEventListener('keydown', (e) => { if (!pdfModal.hidden && e.key === 'Escape') closePdfModal(); });
   document.getElementById('pdf-download').addEventListener('click', () => {
-    // 仍注入主文档的兜底打印样式：万一 iframe 路径被浏览器拦下，
-    // 用户手动按 Ctrl+P 时也能得到正确排版
-    applyPdfPrintStyle();
-    const title = deriveBaseName();
+    applyPdfPrintStyle(); // 必须在下拉值确定后、打印前注入
     closePdfModal();
-    printViaIframe(title); // 打印离屏 iframe，避免扩展注入的浮层被一起打进去
+    const prevTitle = document.title;
+    try {
+      document.title = deriveBaseName(); // 让打印对话框默认文件名用文档标题
+      // 打印本页：扩展注入的浮层由 @media print 里的「可见性硬化」挡掉
+      //（曾改为打印离屏 iframe 以求更强隔离，但那条路径在真实浏览器里产出空白，
+      //  且无头环境无法验证，故回退到这个已验证可用的方案）
+      window.print();
+    } finally {
+      document.title = prevTitle;
+    }
   });
 
   function getCurrentMarkdown() {

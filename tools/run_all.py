@@ -36,7 +36,7 @@ for label, exe in BROWSERS:
             failed.append("%s / %s" % (label, c))
         print("  %-22s %2d PASS  %d FAIL  %s" % (c, p, f, "OK" if ok else "失败"))
 
-    for tool in ("print_check.py", "print_doc_check.py"):
+    for tool in ("print_check.py",):
         r = subprocess.run([sys.executable, os.path.join(TOOLS, tool)],
                            capture_output=True, text=True, env=env,
                            encoding="utf-8", errors="replace", timeout=300)
