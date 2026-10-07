@@ -667,14 +667,13 @@
     .editor:empty::before { content: none; }
     .source { display: none !important; }
 
-    /* 可见性硬化：这是导出 PDF 屏蔽「浏览器扩展注入浮层」的核心手段。
-       扩展元素常带 position:fixed + 极高 z-index，用 display 隐藏容易被其自身样式盖过；
-       而 visibility 只要不被子孙显式改回 visible 就一定生效，且不依赖选择器命中它们。
-       先全隐、再只把正文子树显回来 —— 不在此子树内的注入元素必然被隐掉。
-       注：这几条只能放在 @media print 里。曾经把打印改成「离屏 iframe」以求更强隔离，
-       但那条路径在真实浏览器里产出空白、且无头环境无法验证，已回退到本方案。 */
-    body * { visibility: hidden !important; }
-    .workspace, .workspace * { visibility: visible !important; }
+    /* 屏蔽「浏览器扩展注入的浮层」：扩展一般把自己的浮层挂在 body 下，
+       这里把「除 .workspace 以外的 body 直接子元素」整体移出打印，
+       与上面的显式外壳清单配合 —— 清单负责已知元素，这条负责未知的注入元素
+       （不依赖选择器命中它们）。
+       已知局限：若扩展把元素注入到 .workspace 内部（即正文区里），仍会被打印出来。
+       注：曾在这里写过一对 visibility 规则（先 body * 全隐、再 .workspace * 全显），
+       实测证明它与下面这条 display 规则完全重复、净效果为零，已删除。 */
     body > *:not(.workspace) { display: none !important; }
 
     /* 分页质量：让导出结果像排过版，而不是被打印机随机切断 */
@@ -5453,7 +5452,9 @@ ${bodyHtml}
     }
     el.textContent = '@media print{' +
       '@page{ size:' + o.page + '; margin:' + o.margin + '; }' +
-      '.editor{ font-size:' + o.font + ' !important; line-height:' + o.line + ' !important; }' +
+      // 收窄到 .workspace .editor：.editor 这个类也给分屏编辑器用（.editor.split-editor），
+      // 不收窄的话这条「为编辑器语境写的规则」会泄漏到分屏语境
+      '.workspace .editor{ font-size:' + o.font + ' !important; line-height:' + o.line + ' !important; }' +
       '}';
   }
 
@@ -5498,19 +5499,33 @@ ${bodyHtml}
   document.getElementById('pdf-cancel').addEventListener('click', closePdfModal);
   pdfModal.addEventListener('mousedown', (e) => { if (e.target === pdfModal) closePdfModal(); });
   document.addEventListener('keydown', (e) => { if (!pdfModal.hidden && e.key === 'Escape') closePdfModal(); });
-  document.getElementById('pdf-download').addEventListener('click', () => {
-    applyPdfPrintStyle(); // 必须在下拉值确定后、打印前注入
-    closePdfModal();
-    const prevTitle = document.title;
-    try {
-      document.title = deriveBaseName(); // 让打印对话框默认文件名用文档标题
-      // 打印本页：扩展注入的浮层由 @media print 里的「可见性硬化」挡掉
-      //（曾改为打印离屏 iframe 以求更强隔离，但那条路径在真实浏览器里产出空白，
-      //  且无头环境无法验证，故回退到这个已验证可用的方案）
-      window.print();
-    } finally {
-      document.title = prevTitle;
+  // 打印期的准备工作统一放在 beforeprint 里 —— 让「点下载」与「浏览器自带 Ctrl+P」
+  // 共用同一套逻辑。否则会出现「按钮路径正常，但 Ctrl+P 打出空白或陈旧内容」的偏差：
+  //   · 源码模式下 .editor 是陈旧甚至空的，而打印规则打的正是 .editor
+  //   · 分屏时主文档在分屏编辑器里，.editor 里还是进分屏之前的旧内容
+  // 这两条都会导致「打印出来的不是屏幕上看到的东西」。
+  let pdfPrintPrevTitle = null;
+  window.addEventListener('beforeprint', () => {
+    if (mode === 'source') setMode('wysiwyg');
+    if (view === 'split') {
+      const m = docById(splitState.mainId) || docById(activeDocId);
+      if (m) { editor.innerHTML = m.html; currentFileBase = m.file || null; }
     }
+    applyPdfPrintStyle();
+    pdfPrintPrevTitle = document.title;
+    document.title = deriveBaseName(); // 让打印对话框默认文件名用文档标题
+  });
+  window.addEventListener('afterprint', () => {
+    if (pdfPrintPrevTitle !== null) { document.title = pdfPrintPrevTitle; pdfPrintPrevTitle = null; }
+    // 本次导出参数（纸张/边距/字号）不留给下一次 —— 否则用户以为「回到默认」时
+    // 仍会静默沿用上次在弹窗里选的 A3/28mm，尤其在 Ctrl+P 这条入口上
+    const el = document.getElementById('pdf-print-style');
+    if (el) el.remove();
+  });
+
+  document.getElementById('pdf-download').addEventListener('click', () => {
+    closePdfModal(); // 弹窗必须关掉再打印；其余准备由 beforeprint 负责
+    window.print();
   });
 
   function getCurrentMarkdown() {

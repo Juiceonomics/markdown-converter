@@ -12,7 +12,12 @@ SRC = os.path.join(REPO, "index.html")
 def run(inject_js: str) -> str:
     html = open(SRC, encoding="utf-8").read()
     tag = "<script>\n" + inject_js + "\n</script>"
-    patched = html.replace("<body>", "<body>\n" + tag, 1)
+    # 注入到「最后一个 </body> 之前」，而不是用 replace("<body>", …) 命中最前面那处：
+    # 源码里可能有多处 <body>（CSS 注释、HTML 导出模板字符串等），
+    # 曾因此在注释里注入、脚本静默不执行，导致整套用例失去覆盖却看不出来。
+    idx = html.rfind("</body>")
+    assert idx != -1, "找不到 </body>"
+    patched = html[:idx] + tag + "\n" + html[idx:]
     assert patched != html, "注入失败"
     hp = os.path.join(REPO, "_t_check.html")
     open(hp, "w", encoding="utf-8").write(patched)
