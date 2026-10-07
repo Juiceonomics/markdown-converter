@@ -358,6 +358,21 @@
   .modal-close:hover { color: var(--ink); }
   .modal-body { flex: 1; overflow: auto; padding: 6px 16px; }
   .modal-foot { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--hairline); }
+  /* 历史弹窗底部早就写了 <span class="sep">，但只有 .actions / .toolbar 下有这个类的样式，
+     在弹窗里一直是个无宽度的空 span（等于没有分隔线）。这里补上。 */
+  .modal-foot .sep { align-self: stretch; width: 1px; background: var(--hairline); margin: 0 2px; }
+  /* 存储占用面板 */
+  .sto-sum { display: flex; flex-direction: column; gap: 6px; margin: 10px 4px 14px; }
+  .sto-line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--ink-2); }
+  .sto-line b { font-weight: 600; color: var(--ink); }
+  .sto-line.warn span { color: #B42318; font-weight: 600; }
+  .sto-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0 4px; }
+  .sto-table th { text-align: left; font-weight: 600; font-size: 11.5px; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--hairline); }
+  .sto-table td { padding: 7px 8px; border-bottom: 1px solid var(--hairline); color: var(--ink-2); vertical-align: top; }
+  .sto-table td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sto-key { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .sto-badge { display: inline-block; font-size: 10.5px; font-weight: 600; color: #B42318; background: #FDECEA; border-radius: 999px; padding: 1px 7px; vertical-align: middle; }
+  .sto-note { font-size: 12px; color: var(--muted); line-height: 1.75; margin: 14px 4px 6px; }
   /* PDF 预览弹窗（可调大小、可关闭） */
   .pdf-modal {
     width: min(92vw, 1080px); height: 86vh; max-height: none;
@@ -1398,10 +1413,27 @@
       <span class="sep"></span>
       <button id="history-export">导出备份</button>
       <button id="history-import">导入备份</button>
+      <button id="history-storage">存储占用</button>
     </div>
   </div>
 </div>
 <input type="file" id="history-import-input" accept=".json,application/json" hidden>
+
+<div class="modal-backdrop" id="storage-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="storage-title">
+    <div class="modal-head">
+      <div class="modal-title" id="storage-title">存储占用</div>
+      <button class="modal-close" id="storage-close" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body" id="storage-body"></div>
+    <div class="modal-foot">
+      <button id="storage-backup" class="primary">先导出完整备份</button>
+      <span class="sep"></span>
+      <button id="storage-trim-snaps">快照只留最近 5 份</button>
+      <button id="storage-trim-hist">历史只留最近 10 条</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-backdrop" id="versions-modal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="versions-title">
@@ -2442,8 +2474,9 @@
   function loadSplitPrefs() {
     try { return JSON.parse(localStorage.getItem(SPLIT_PREFS_KEY)) || {}; } catch (e) { return {}; }
   }
+  // 走统一写入层：原先裸 setItem + 吞异常，配额满时静默失效，用户只会觉得「分屏没记住」
   function saveSplitPrefs(p) {
-    try { localStorage.setItem(SPLIT_PREFS_KEY, JSON.stringify(p)); } catch (e) {}
+    if (!safeSet(SPLIT_PREFS_KEY, JSON.stringify(p))) warnStorageFull();
   }
   // 填充某窗格的「换文档」下拉（排除对侧窗格与自身，避免同文档占据两侧）
   function populateSplitDocPicker(pane) {
@@ -2650,31 +2683,96 @@
   // 失败不抛错、按需截断瘦身，绝不让一次写盘失败打断整条保存链。
   // 快照 / 历史改用「总量预算」保留最近的若干份*完整*版本，
   // 绝不截断正文 —— 否则用户点「恢复」会恢复出一份被砍掉一半的文档（静默损坏）。
-  const SNAPSHOT_BUDGET = 1500000;
-  const HISTORY_BUDGET = 1200000;
+  //
+  // 【预算单位是字节，不是字符】localStorage 按 UTF-16 计费（约 2 字节/字符）。
+  // 早先预算是按字符数写的：快照 150 万 + 历史 120 万 + 草稿 120 万字符 ≈ 7.8MB，
+  // 光预算本身就超过了约 5MB 的配额；而 folio.docs / folio.library 连字符预算都没有。
+  // 那不是保护，是装饰 —— 所以只要内容继续积累，撞墙是必然的。
+  const UTF16_BYTES = 2;
+  const bytesOf = s => (s || '').length * UTF16_BYTES;
+  const SNAPSHOT_BUDGET_BYTES = 900000;    // 约 45 万字符
+  const HISTORY_BUDGET_BYTES = 700000;     // 约 35 万字符
+  const DRAFT_FALLBACK_BYTES = 1200000;    // 仅在整份草稿都写不下时才截断
   const HISTORY_MAX = 50;
-  const DRAFT_FALLBACK_CLIP = 1200000;
-  function clipHtml(html, limit) {
-    if (!html || html.length <= limit) return html;
-    return html.slice(0, limit);
+  const SNAPSHOT_MAX = 30;
+  // 五个存完整 HTML 的键 —— 它们才是占用的大头。其余十个设置类键合计只有几 KB。
+  // 用字面量而不是引用各自的 *_KEY 常量：那些常量声明在本文件更靠后的位置。
+  const BIG_KEY_NAMES = ['folio.docs', 'folio.history', 'folio.draft', 'folio.snapshots', 'folio.library'];
+  // 这五个键的合计参考上限，只用于面板显示与预警，不做自动删除（见 reclaimSpace）
+  const BIG_KEYS_TOTAL_BYTES = 3200000;
+
+  // 各键当前占用（字节）。直接 getItem().length 每次按键都要复制几 MB 字符串，
+  // 所以按写入增量维护缓存；只反映本标签页自己的写入（跨标签不同步，与今天的行为一致）。
+  const sizeCache = new Map();
+  function sizeOf(key) {
+    if (!sizeCache.has(key)) {
+      try { sizeCache.set(key, bytesOf(localStorage.getItem(key))); } catch (e) { sizeCache.set(key, 0); }
+    }
+    return sizeCache.get(key);
+  }
+  function bigKeysBytes() { return BIG_KEY_NAMES.reduce((n, k) => n + sizeOf(k), 0); }
+
+  function clipHtml(html, limitBytes) {
+    if (!html || bytesOf(html) <= limitBytes) return html;
+    return html.slice(0, Math.floor(limitBytes / UTF16_BYTES));
   }
   // 自最新往回累加，超出预算的旧版本丢弃；无论多大都至少保住最新一份
-  function trimByBudget(list, budget, maxCount) {
+  function trimByBudget(list, budgetBytes, maxCount) {
     const out = [];
     let used = 0;
     for (const item of list) {
       if (out.length >= maxCount) break;
-      const size = (item.html || '').length;
-      if (out.length && used + size > budget) break;
+      const size = bytesOf(item.html);
+      if (out.length && used + size > budgetBytes) break;
       out.push(item);
       used += size;
     }
     return out;
   }
-  function safeSet(key, value) {
-    try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+
+  // 真的撞到配额时才腾挪，且**只收缩「可再生」的历史与快照**（各留最新一条），
+  // 绝不自动删 docs / library / draft —— 那是用户自己的文档，宁可提示也不能替他删。
+  // 平时不做任何自动删除：否则会变成「用户毫无感觉，历史却悄悄少了一半」。
+  let reclaiming = false;
+  function reclaimSpace() {
+    if (reclaiming) return false;
+    reclaiming = true;
+    try {
+      let freed = false;
+      for (const [read, write] of [[getHistory, setHistory], [getSnapshots, setSnapshots]]) {
+        const list = read();
+        if (list.length <= 1) continue;
+        write(list.slice(0, Math.max(1, Math.floor(list.length / 2))));
+        freed = true;
+      }
+      return freed;
+    } catch (e) {
+      return false;
+    } finally {
+      reclaiming = false;
+    }
   }
-  function safeRemove(key) { try { localStorage.removeItem(key); } catch (e) {} }
+
+  function safeSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      sizeCache.set(key, bytesOf(value));
+      return true;
+    } catch (e) {
+      if (!reclaiming && BIG_KEY_NAMES.indexOf(key) !== -1 && reclaimSpace()) {
+        try {
+          localStorage.setItem(key, value);
+          sizeCache.set(key, bytesOf(value));
+          showToast('存储接近上限，已自动精简较早的历史/快照以腾出空间', 4000);
+          return true;
+        } catch (e2) { return false; }
+      }
+      return false;
+    }
+  }
+  function safeRemove(key) {
+    try { localStorage.removeItem(key); sizeCache.set(key, 0); } catch (e) {}
+  }
   let storageWarned = false;
   function warnStorageFull() {
     if (storageWarned) return; // 连 console 一起节流：配额耗尽时写入会每 800ms 失败一次
@@ -2682,7 +2780,7 @@
     console.warn('[Folio] localStorage 写入失败：可能已超出浏览器存储配额');
     setTimeout(() => { storageWarned = false; }, 30000);
     // 写入失败往往紧跟着一句「已保存」的成功 toast，稍等片刻再提示，避免被覆盖掉
-    setTimeout(() => showToast('本地存储空间不足，部分自动保存未写入；建议清理旧快照或导出备份', 6000), 350);
+    setTimeout(() => showToast('本地存储空间不足，部分内容未写入。请打开「历史 → 存储占用」清理或导出备份', 6000), 350);
   }
 
   function getHistory() {
@@ -2702,7 +2800,7 @@
     };
     if (safeSet(DRAFT_KEY, JSON.stringify(rec))) return;
     // 整份都存不下（文档极大）→ 退回截断版并打标，恢复时明确提醒用户，绝不静默恢复半份
-    rec.html = clipHtml(html, DRAFT_FALLBACK_CLIP);
+    rec.html = clipHtml(html, DRAFT_FALLBACK_BYTES);
     rec.truncated = true;
     if (!safeSet(DRAFT_KEY, JSON.stringify(rec))) warnStorageFull();
   }
@@ -2746,7 +2844,7 @@
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 120),
       savedAt: Date.now()
     });
-    setHistory(trimByBudget(hist, HISTORY_BUDGET, HISTORY_MAX));
+    setHistory(trimByBudget(hist, HISTORY_BUDGET_BYTES, HISTORY_MAX));
   }
 
   const historyModal = document.getElementById('history-modal');
@@ -2828,13 +2926,17 @@
     }
   });
 
-  // 备份：导出 / 导入（历史 + 草稿）
-  document.getElementById('history-export').addEventListener('click', () => {
+  // 备份：导出 / 导入。抽成函数，历史弹窗与「存储占用」面板共用同一份逻辑。
+  // v4 补齐了 v3 漏掉的 activeDocId / splitPrefs / pdfOpts / selOff / zoom：
+  // 原先导出有 docs 却没有 activeDocId，导入后活动标签会退回第一个。
+  // 注意 folio.translate（翻译 / LLM 的 API 密钥）**不进备份** —— 备份是明文 JSON，
+  // 用户可能会随手发出去；换设备后重新填一次更安全。
+  function exportBackup() {
     let draft = null;
     try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
     const data = {
       app: 'folio',
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       history: getHistory(),
       draft: draft,
@@ -2842,14 +2944,21 @@
       categories: getCats(),
       // round 3: 纳入多标签、单词库、专注记录、快照
       docs: docs,
+      activeDocId: activeDocId,
       words: getWords(),
       focus: getFocusRecords(),
       snapshots: getSnapshots(),
-      beautify: loadBeautifyCfg()
+      beautify: loadBeautifyCfg(),
+      // round 4: 补齐设置类小键
+      splitPrefs: loadSplitPrefs(),
+      pdfOpts: readPdfOpts(),
+      selOff: getSelOff(),
+      zoom: zoomLevel
     };
     downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'folio备份.json');
-    showToast('已导出备份（历史 ' + data.history.length + ' 条 · 知识库 ' + data.library.length + ' 篇 · 标签 ' + data.docs.length + ' 个 · 单词 ' + data.words.length + ' 词）');
-  });
+    showToast('已导出备份（历史 ' + data.history.length + ' 条 · 知识库 ' + data.library.length + ' 篇 · 标签 ' + data.docs.length + ' 个 · 单词 ' + data.words.length + ' 词）', 4000);
+  }
+  document.getElementById('history-export').addEventListener('click', exportBackup);
 
   document.getElementById('history-import').addEventListener('click', () => {
     document.getElementById('history-import-input').click();
@@ -2876,6 +2985,11 @@
       }
       // 用 safeSet：这里抛出会中断后续的 docs 导入与刷新，导致「半导入」且无任何提示
       if (data.draft && data.draft.html) safeSet(DRAFT_KEY, JSON.stringify(data.draft));
+      // v4 的设置类小键（v3 及更早的备份里没有，缺了就跳过）
+      if (data.pdfOpts && typeof data.pdfOpts === 'object') { safeSet(PDF_OPTS_KEY, JSON.stringify(data.pdfOpts)); loadPdfOpts(); }
+      if (data.splitPrefs && typeof data.splitPrefs === 'object') safeSet(SPLIT_PREFS_KEY, JSON.stringify(data.splitPrefs));
+      if (Array.isArray(data.selOff)) safeSet(SEL_OFF_KEY, JSON.stringify(data.selOff));
+      if (typeof data.zoom === 'number') setZoom(data.zoom);
       if (Array.isArray(data.docs) && data.docs.length) {
         docs = data.docs;
         activeDocId = data.activeDocId && docById(data.activeDocId) ? data.activeDocId : docs[0].id;
@@ -2895,9 +3009,123 @@
     reader.readAsText(f, 'utf-8');
   });
 
+  // ===== 存储占用面板 =====
+  // 起因：用户 localStorage 满了、存不进新文件，而此前应用里**没有任何地方能看到空间去哪了**，
+  // 唯一反馈是一句延迟 350ms 的 toast。这个面板把占用摊开，并提供可点的精准清理。
+  const storageModal = document.getElementById('storage-modal');
+  const storageBody = document.getElementById('storage-body');
+  const STORAGE_LABELS = {
+    'folio.docs': '打开的标签', 'folio.history': '历史记录', 'folio.draft': '当前草稿',
+    'folio.snapshots': '版本快照', 'folio.library': '知识库', 'folio.words': '单词库',
+    'folio.focus': '专注记录', 'folio.focus.state': '专注计时中', 'folio.cats': '知识库分类',
+    'folio.beautify': '美化设置', 'folio.pdfOpts': 'PDF 导出设置', 'folio.splitPrefs': '分屏记忆',
+    'folio.selOff': '划词关闭记录', 'folio.zoom': '纸面缩放', 'folio.translate': '翻译设置（含 API 密钥）'
+  };
+  function fmtBytes(n) {
+    if (n >= 1048576) return (n / 1048576).toFixed(2) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+    return n + ' B';
+  }
+  function storageRowCount(raw) {
+    if (raw == null) return '—';
+    try {
+      const v = JSON.parse(raw);
+      if (Array.isArray(v)) return v.length + ' 条';
+      if (v && typeof v === 'object' && Array.isArray(v.docs)) return v.docs.length + ' 个标签';
+      if (v && typeof v === 'object') return Object.keys(v).length + ' 项';
+    } catch (e) { return '—'; }
+    return '—';
+  }
+  function renderStorage() {
+    let rows = [];
+    let total = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || k.indexOf('folio.') !== 0) continue;
+        const raw = localStorage.getItem(k);
+        const bytes = bytesOf(raw);
+        total += bytes;
+        rows.push({ k: k, raw: raw, bytes: bytes });
+      }
+    } catch (e) {}
+    rows.sort((a, b) => b.bytes - a.bytes);
+
+    const big = rows.reduce((n, r) => n + (BIG_KEY_NAMES.indexOf(r.k) !== -1 ? r.bytes : 0), 0);
+    const over = big > BIG_KEYS_TOTAL_BYTES;
+    let html = '<div class="sto-sum">' +
+      '<div class="sto-line"><b>localStorage 合计</b><span>' + fmtBytes(total) + '</span></div>' +
+      '<div class="sto-line' + (over ? ' warn' : '') + '"><b>其中存正文的 5 个键</b><span>' +
+        fmtBytes(big) + ' / 参考上限 ' + fmtBytes(BIG_KEYS_TOTAL_BYTES) + '</span></div>' +
+      '<div class="sto-line" id="sto-origin"><b>浏览器报告本站已用</b><span>统计中…</span></div>' +
+      '</div>';
+    html += '<table class="sto-table"><thead><tr><th>内容</th><th>条数</th><th>占用</th></tr></thead><tbody>';
+    if (!rows.length) html += '<tr><td colspan="3">（还没有任何数据）</td></tr>';
+    rows.forEach(r => {
+      const isBig = BIG_KEY_NAMES.indexOf(r.k) !== -1;
+      html += '<tr><td>' + escapeHtml(STORAGE_LABELS[r.k] || '（未知）') +
+              '<span class="sto-key">' + escapeHtml(r.k) + '</span></td>' +
+              '<td>' + escapeHtml(storageRowCount(r.raw)) + '</td>' +
+              '<td>' + fmtBytes(r.bytes) + (isBig ? ' <span class="sto-badge">大</span>' : '') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += '<p class="sto-note">浏览器给 localStorage 的上限约 <b>5MB</b>，且按 UTF-16 计费（一个字符算 2 字节）。' +
+            '这里显示的是实际占用。<b>清理只是腾地方，撞到上限还会再来</b> —— 彻底解决要把正文搬到容量大得多的 IndexedDB，已列入计划。</p>' +
+            '<p class="sto-note">「浏览器报告本站已用」统计的是<b>整个网站</b>（含缓存等），不只 localStorage。' +
+            '翻译 / LLM 的 API 密钥不会写进备份文件（备份是明文 JSON），换设备后请在「⚙ 翻译」里重新填写。</p>';
+    storageBody.innerHTML = html;
+
+    if (navigator.storage && navigator.storage.estimate) {
+      navigator.storage.estimate().then(est => {
+        const el = document.getElementById('sto-origin');
+        if (!el) return;
+        const used = est.usage || 0, quota = est.quota || 0;
+        if (!used) { el.lastElementChild.textContent = '浏览器未提供（file:// 下通常没有）'; return; }
+        el.lastElementChild.textContent = fmtBytes(used) + (quota ? ' / 配额 ' + fmtBytes(quota) : '');
+      }).catch(() => {
+        const el = document.getElementById('sto-origin');
+        if (el) el.lastElementChild.textContent = '浏览器未提供';
+      });
+    } else {
+      const el = document.getElementById('sto-origin');
+      if (el) el.lastElementChild.textContent = '此浏览器不支持查询';
+    }
+  }
+  function openStorage() {
+    if (!historyModal.hidden) historyModal.hidden = true;   // 避免两层弹窗叠加
+    renderStorage();
+    storageModal.hidden = false;
+    document.getElementById('storage-close').focus();
+  }
+  function closeStorage() { storageModal.hidden = true; }
+  document.getElementById('history-storage').addEventListener('click', openStorage);
+  document.getElementById('storage-close').addEventListener('click', closeStorage);
+  storageModal.addEventListener('mousedown', (e) => { if (e.target === storageModal) closeStorage(); });
+  document.addEventListener('keydown', (e) => { if (!storageModal.hidden && e.key === 'Escape') closeStorage(); });
+  document.getElementById('storage-backup').addEventListener('click', exportBackup);
+  document.getElementById('storage-trim-snaps').addEventListener('click', async () => {
+    const list = getSnapshots();
+    if (list.length <= 5) { showToast('快照已经不超过 5 份'); return; }
+    if (!(await confirmDialog('把版本快照裁剪到最近 5 份？更早的 ' + (list.length - 5) + ' 份将被删除（此操作不可撤销）。'))) return;
+    const before = sizeOf(SNAPSHOTS_KEY);
+    setSnapshots(list.slice(0, 5));
+    renderVersions();
+    renderStorage();
+    showToast('已裁剪快照，释放约 ' + fmtBytes(Math.max(0, before - sizeOf(SNAPSHOTS_KEY))));
+  });
+  document.getElementById('storage-trim-hist').addEventListener('click', async () => {
+    const list = getHistory();
+    if (list.length <= 10) { showToast('历史记录已经不超过 10 条'); return; }
+    if (!(await confirmDialog('把历史记录裁剪到最近 10 条？更早的 ' + (list.length - 10) + ' 条将被删除（此操作不可撤销）。'))) return;
+    const before = sizeOf(HISTORY_KEY);
+    setHistory(list.slice(0, 10));
+    renderHistory();
+    renderStorage();
+    showToast('已裁剪历史，释放约 ' + fmtBytes(Math.max(0, before - sizeOf(HISTORY_KEY))));
+  });
+
   // ===== 版本快照 =====
   const SNAPSHOTS_KEY = 'folio.snapshots';
-  const SNAPSHOT_MAX = 30;
   function getSnapshots() {
     try { return JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || '[]'); } catch (e) { return []; }
   }
@@ -2925,7 +3153,7 @@
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 120),
       savedAt: Date.now()
     });
-    if (!setSnapshotsSafe(trimByBudget(snaps, SNAPSHOT_BUDGET, SNAPSHOT_MAX))) warnStorageFull();
+    if (!setSnapshotsSafe(trimByBudget(snaps, SNAPSHOT_BUDGET_BYTES, SNAPSHOT_MAX))) warnStorageFull();
   }
 
   const versionsModal = document.getElementById('versions-modal');
@@ -3006,11 +3234,19 @@
   // ===== 知识库（长期保存 + 分类）=====
   const LIBRARY_KEY = 'folio.library';
   const CATS_KEY = 'folio.cats';
+  const LIB_MAX = 200;
   const CAT_ALL = '__all__', CAT_NONE = '__none__';
   let libFilter = CAT_ALL, libQuery = '', libDocs = [];
 
   function getLibrary() { try { return JSON.parse(localStorage.getItem(LIBRARY_KEY) || '[]'); } catch (e) { return []; } }
-  function setLibrary(list) { if (!safeSet(LIBRARY_KEY, JSON.stringify(list))) warnStorageFull(); }
+  // 返回布尔值：调用方必须据此决定提示什么。
+  // 早先返回 undefined，于是「存入知识库」那条路径无论写盘成败都弹「已存入知识库」——
+  // 用户看到成功提示，文档却不在库里（列表是从存储回读的），属于静默数据丢失。
+  function setLibrary(list) {
+    if (safeSet(LIBRARY_KEY, JSON.stringify(list))) return true;
+    warnStorageFull();
+    return false;
+  }
   function getCats() { try { return JSON.parse(localStorage.getItem(CATS_KEY) || '[]'); } catch (e) { return []; } }
   function setCats(list) { if (!safeSet(CATS_KEY, JSON.stringify(list))) warnStorageFull(); }
 
@@ -3196,10 +3432,13 @@
     }
     const lib = getLibrary();
     lib.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title, category: cat, html: getExportHtml(), text: (mode === 'source' ? source.value : editor.innerText).slice(0, 160), savedAt: Date.now(), updatedAt: Date.now() });
-    setLibrary(lib.slice(0, 200));
+    const capped = lib.length > LIB_MAX;
+    const stored = setLibrary(lib.slice(0, LIB_MAX));
+    // 写盘失败时**不关弹窗**：关掉就等于把用户刚输入的内容也丢了
+    if (!stored) { showToast('存储空间不足，未能存入知识库。请先在「历史 → 存储占用」清理，或导出备份', 7000); return; }
     libSaveModal.hidden = true;
     renderLibrary();
-    showToast('已存入知识库');
+    showToast(capped ? '已存入知识库（超出 ' + LIB_MAX + ' 篇上限，最旧的一篇已移出）' : '已存入知识库', capped ? 5000 : 2200);
   });
   document.getElementById('lib-save-close').addEventListener('click', () => { libSaveModal.hidden = true; });
   document.getElementById('lib-save-cancel').addEventListener('click', () => { libSaveModal.hidden = true; });
