@@ -3,6 +3,12 @@ try { localStorage.clear(); } catch (e) {}
 window.addEventListener('load', function () {
   setTimeout(function () {
     var out = [];
+    // 历史现在存在 IndexedDB（大键），直读 localStorage 拿到的是迁移时的旧副本或空 ——
+    // 断言必须走存储层，否则改完之后这些用例会静默失去覆盖
+    function histNow() {
+      var raw = (window.__folioStorage && window.__folioStorage.get('folio.history')) || '[]';
+      try { return JSON.parse(raw); } catch (e) { return []; }
+    }
     function t(name, got, want) {
       out.push((String(got) === String(want) ? 'PASS ' : 'FAIL ') + name +
                ' | got=' + JSON.stringify(got) + ' want=' + JSON.stringify(want));
@@ -23,22 +29,22 @@ window.addEventListener('load', function () {
     editor.innerHTML = savedHtml;
 
     // ---- ② 导入即留档 ----
-    var before = JSON.parse(localStorage.getItem('folio.history') || '[]').length;
+    var before = histNow().length;
     document.getElementById('btn-paste').click();
     document.getElementById('paste-input').value = '# 导入留档测试\n\n这段内容导入后应当自动进历史。';
     document.getElementById('paste-confirm').click();
-    var hist = JSON.parse(localStorage.getItem('folio.history') || '[]');
+    var hist = histNow();
     t('导入后历史条数增加', hist.length > before, true);
     t('导入内容已在历史里', /导入留档测试/.test(hist[0] ? hist[0].html : ''), true);
 
     // ---- ③ 清空前留档 + 可撤销 ----
     editor.innerHTML = '<h1>清空目标</h1><p>这段内容在清空后应当能被撤销回来。</p>';
     var snapshot = editor.innerHTML;
-    var histBefore = JSON.parse(localStorage.getItem('folio.history') || '[]').length;
+    var histBefore = histNow().length;
     document.getElementById('btn-clear').click();
     t('已清空', editor.innerHTML.replace(/\s/g, ''), '');
     t('撤销条出现', document.getElementById('clear-bar').hidden, false);
-    var histAfter = JSON.parse(localStorage.getItem('folio.history') || '[]');
+    var histAfter = histNow();
     t('清空前内容已留档', /清空目标/.test(histAfter[0] ? histAfter[0].html : ''), true);
     t('留档使历史增加', histAfter.length > histBefore, true);
     document.getElementById('clear-undo').click();
@@ -55,9 +61,9 @@ window.addEventListener('load', function () {
 
     // ---- ⑤ 空内容时清空应被拦下（不产生无意义的留档）----
     editor.innerHTML = '';
-    var h5 = JSON.parse(localStorage.getItem('folio.history') || '[]').length;
+    var h5 = histNow().length;
     document.getElementById('btn-clear').click();
-    t('空内容清空不留档', JSON.parse(localStorage.getItem('folio.history') || '[]').length, h5);
+    t('空内容清空不留档', histNow().length, h5);
 
     var preOut = document.createElement('pre');
     preOut.id = 'zz-results';

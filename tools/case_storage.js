@@ -16,6 +16,19 @@ window.addEventListener('load', function () {
     function ta(name, got, want) { t(name, got, want); }
     // 轮询等待，不要用固定 sleep 去等 FileReader —— 实测在 Edge 上会偶发没跑完就断言，
     // 表现为「同一个用例时绿时红」。用尝试次数而不是时钟，避免受 --virtual-time 影响。
+    // 结果输出。做成函数 + 定时兜底：万一某一步永远不 resolve，
+    // 也要把已经攒下的断言交回来 —— 否则表现只是「等结果超时」，
+    // 前面那些明确的 FAIL 一条都看不到（RED 验证就无从谈起）。
+    var emitted = false;
+    function emitResults() {
+      if (emitted) return;
+      emitted = true;
+      var preOut = document.createElement('pre');
+      preOut.id = 'zz-results';
+      preOut.textContent = 'ZZBEGIN\n' + out.join('\n') + '\nZZEND';
+      document.body.appendChild(preOut);
+    }
+    setTimeout(emitResults, 20000);
     async function waitUntil(fn, tries) {
       for (var i = 0; i < (tries || 150); i++) {
         if (fn()) return true;
@@ -24,16 +37,16 @@ window.addEventListener('load', function () {
       return false;
     }
 
-    // ---- 1. 预算单位：字节，不是字符 ----
-    t('1 个字符按 2 字节计（UTF-16）', bytesOf('abc'), 6);
-    t('空值算 0', bytesOf(null), 0);
+    // ---- 1. 预算单位：字符（UTF-16 码元），不是字节 ----
+    // 这条曾经搞反过：按「1 字符 = 2 字节」折算，于是把 5,242,880 字符的配额
+    // 当成了 10MB，据此设的预算全跟着错。下面第 8 节直接把配额量出来自校验。
+    t('占用按字符数计', charsOf('abc'), 3);
+    t('空值算 0', charsOf(null), 0);
 
     function mk(i, len) { return { id: 'x' + i, html: new Array(len + 1).join('x') }; }
-    // 3 条各 100 字符（= 200 字节）。用同一条数据、同一套实现，只把预算按两种口径传进去，
-    // 结果必然不同 —— 这就是「预算单位从字符换成了字节」的直接证据。
     var three = [mk(1, 100), mk(2, 100), mk(3, 100)];
-    t('按字节口径：预算 500 只装得下 2 条', trimByBudget(three, 500, 10).length, 2);
-    t('若预算是 500 字符（旧口径，即 1000 字节）就能装 3 条', trimByBudget(three, 1000, 10).length, 3);
+    t('预算 250 字符装得下 2 条（每条 100）', trimByBudget(three, 250, 10).length, 2);
+    t('预算 400 字符装得下 3 条', trimByBudget(three, 400, 10).length, 3);
     t('无论多大都至少保住最新一份', trimByBudget([mk(1, 100000)], 10, 10).length, 1);
     t('条数上限仍然生效', trimByBudget([mk(1, 10), mk(2, 10), mk(3, 10)], 999999, 2).length, 2);
 
@@ -60,16 +73,21 @@ window.addEventListener('load', function () {
     t('历史只剩 1 条时不会再删', getHistory().length, 1);
 
     // ---- 3. 「存入知识库」写盘失败不得假报成功 ----
+    // 前置守卫：必须确认真的跑在 IndexedDB 上，否则这一组断言测的还是旧路径（空转）
+    t('存储后端确实是 IndexedDB（否则本组断言没覆盖到新代码）', window.__folioStorage.mode(), 'idb');
     editor.innerHTML = '<h1>要存进知识库的内容</h1><p>正文</p>';
     document.getElementById('lib-save-title-input').value = '失败测试';
     document.getElementById('lib-save-modal').hidden = false;
     document.getElementById('toast').textContent = '';
-    var realSet = localStorage.setItem;
-    // 让这一次写入必定失败（模拟配额耗尽）
+    // 让写入必定失败：两条后端都堵上，避免只堵了 localStorage 却在 IDB 模式下空转
+    var realSet = localStorage.setItem, realPut = window.idbPutMany;
     localStorage.setItem = function () { throw new Error('QuotaExceededError'); };
+    window.idbPutMany = function () { return Promise.reject(new Error('QuotaExceededError')); };
     document.getElementById('lib-save-confirm').click();
+    await waitUntil(function () { return /未能存入知识库/.test(document.getElementById('toast').textContent); }, 60);
     var toastText = document.getElementById('toast').textContent;
     localStorage.setItem = realSet;
+    window.idbPutMany = realPut;
 
     t('写盘失败时不弹「已存入知识库」', /已存入知识库/.test(toastText), false);
     t('写盘失败时给出的是失败提示', /未能存入知识库/.test(toastText), true);
@@ -86,13 +104,13 @@ window.addEventListener('load', function () {
     t('存储面板已打开', document.getElementById('storage-modal').hidden, false);
     t('打开面板时先关掉历史弹窗（避免两层弹窗叠加）', document.getElementById('history-modal').hidden, true);
     t('面板列出了知识库这一项', /知识库/.test(body), true);
-    t('面板写明了 5MB 上限', /5MB/.test(body), true);
-    t('面板给出「存正文的 5 个键」合计', /存正文的 5 个键/.test(body), true);
-    t('面板点明了清理只是腾地方', /清理只是腾地方/.test(body), true);
+    t('面板标明了当前存储后端', /存储后端/.test(body), true);
+    t('面板写明正文已存进 IndexedDB', /文档数据（IndexedDB）/.test(body), true);
+    t('面板写明了 localStorage 的配额是按字符算的', /配额按<b>字符<\/b>算/.test(body), true);
+    t('面板给出了实测的配额数值', /5,242,880/.test(body), true);
     t('面板说明了 API 密钥不进备份', /API 密钥不会写进备份/.test(body), true);
-    t('面板列出的键数与实际 folio.* 键数一致',
-      (body.match(/class="sto-key"/g) || []).length,
-      (function () { var n = 0; for (var k = 0; k < localStorage.length; k++) if (String(localStorage.key(k)).indexOf('folio.') === 0) n++; return n; })());
+    // 面板必须把 5 个大键逐个列出来（少一个就说明某个键没被算进占用）
+    t('面板列出了全部 5 个大键', (body.match(/class="sto-key"/g) || []).length >= 5, true);
 
     setHistory(hist.slice(0, 6));
     document.getElementById('storage-trim-hist').click();
@@ -158,9 +176,62 @@ window.addEventListener('load', function () {
     await waitUntil(function () { return activeDocId === 'old1'; });
     ta('v3 旧备份仍可导入（缺的键跳过）', activeDocId, 'old1');
 
-    var preOut = document.createElement('pre');
-    preOut.id = 'zz-results';
-    preOut.textContent = 'ZZBEGIN\n' + out.join('\n') + '\nZZEND';
-    document.body.appendChild(preOut);
+    // ---- 7. 核心诉求：超过 localStorage 5MB 上限的文档必须能存下 ----
+    // 这是整次改造要解决的问题本身，直接量它，而不是只量周边。
+    var huge = JSON.stringify({
+      html: '<p>' + '很长的正文。'.repeat(1300000) + '</p>',
+      title: '超大文档', savedAt: Date.now()
+    });
+    out.push('INFO 超大草稿 = ' + huge.length.toLocaleString('en-US') + ' 字符（localStorage 配额约 ' +
+             LS_QUOTA_CHARS.toLocaleString('en-US') + '）');
+    t('这份文档确实超过了 localStorage 的整个配额', huge.length > LS_QUOTA_CHARS, true);
+    var okBig = await storeSetDurable('folio.draft', huge);
+    t('超过整份配额的文档写入成功（localStorage 时代这里必然失败）', okBig, true);
+
+    // 真的落到盘上、而不只是躺在内存镜像里：重新从 IDB 独立读一遍
+    var readBack = await new Promise(function (res) {
+      try {
+        var rq = indexedDB.open('folio', 1);
+        rq.onerror = function () { res(null); };
+        rq.onsuccess = function (e) {
+          var g = e.target.result.transaction('kv', 'readonly').objectStore('kv').get('folio.draft');
+          g.onsuccess = function () { res(g.result); };
+          g.onerror = function () { res(null); };
+        };
+      } catch (err) { res(null); }
+    });
+    t('超大文档真的落到了 IndexedDB 里（不是只在内存）',
+      readBack !== null && readBack.length === huge.length, true);
+    t('落盘内容首尾都对得上',
+      readBack !== null && readBack.slice(0, 40) === huge.slice(0, 40) && readBack.slice(-40) === huge.slice(-40), true);
+    // 清掉，别让这份超大文档影响后面的用例
+    storeSetDurable('folio.draft', 'null');
+    safeRemove('folio.draft');
+
+    // ---- 8. 自校验：把 localStorage 的真实配额量出来，验证代码里的常量没写歪 ----
+    // 这一节的唯一目的就是防止「单位搞错」再次发生：曾经按「1 字符 = 2 字节」折算，
+    // 得出「配额是 10MB」的错误结论，据此设的预算全跟着错，还据此写了一版错误的结论。
+    // 放在最后做，因为它会把 localStorage 填满；全程用裸 setItem，不走 safeSet，
+    // 免得触发 reclaimSpace 把历史/快照清掉。
+    var CAP = (function () {
+      var CH = 250000, chunk = new Array(CH + 1).join('x'), i, n = 0;
+      try { for (; n < 40; n++) localStorage.setItem('__qp' + n, chunk); } catch (e) {}
+      var lo = 0, hi = CH;
+      while (lo < hi) {
+        var mid = Math.ceil((lo + hi) / 2);
+        try { localStorage.setItem('__qp' + n, new Array(mid + 1).join('x')); lo = mid; }
+        catch (e) { hi = mid - 1; }
+      }
+      var cap = n * CH + lo;
+      for (i = 0; i <= n; i++) { try { localStorage.removeItem('__qp' + i); } catch (e) {} }
+      return cap;
+    })();
+    out.push('INFO 实测 localStorage 配额 = ' + CAP.toLocaleString('en-US') + ' 字符');
+    t('代码里的配额常量与实测相符（误差 < 1%）', Math.abs(CAP - LS_QUOTA_CHARS) / CAP < 0.01, true);
+    t('配额确实按字符计 —— 若按字节算会得出约 10MB，那是错的', CAP < 6 * 1024 * 1024, true);
+    t('探针清干净了（没把 localStorage 占着）',
+      (function () { try { for (var k = 0; k < localStorage.length; k++) if (String(localStorage.key(k)).indexOf('__qp') === 0) return false; return true; } catch (e) { return false; } })(), true);
+
+    emitResults();
   }, 700);
 });

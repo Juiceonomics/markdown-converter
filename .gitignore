@@ -7,3 +7,4 @@ desktop.ini
 *.swp
 *~
 .superpowers/
+tools/__pycache__/

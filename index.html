@@ -373,6 +373,7 @@
   .sto-key { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
   .sto-badge { display: inline-block; font-size: 10.5px; font-weight: 600; color: #B42318; background: #FDECEA; border-radius: 999px; padding: 1px 7px; vertical-align: middle; }
   .sto-note { font-size: 12px; color: var(--muted); line-height: 1.75; margin: 14px 4px 6px; }
+  .sto-h { font-family: var(--font-ui); font-size: 12px; font-weight: 600; color: var(--muted); margin: 16px 4px 6px; }
   /* PDF 预览弹窗（可调大小、可关闭） */
   .pdf-modal {
     width: min(92vw, 1080px); height: 86vh; max-height: none;
@@ -1431,6 +1432,7 @@
       <span class="sep"></span>
       <button id="storage-trim-snaps">快照只留最近 5 份</button>
       <button id="storage-trim-hist">历史只留最近 10 条</button>
+      <button id="storage-clean-legacy" hidden>清理 localStorage 旧副本</button>
     </div>
   </div>
 </div>
@@ -2684,46 +2686,306 @@
   // 快照 / 历史改用「总量预算」保留最近的若干份*完整*版本，
   // 绝不截断正文 —— 否则用户点「恢复」会恢复出一份被砍掉一半的文档（静默损坏）。
   //
-  // 【预算单位是字节，不是字符】localStorage 按 UTF-16 计费（约 2 字节/字符）。
-  // 早先预算是按字符数写的：快照 150 万 + 历史 120 万 + 草稿 120 万字符 ≈ 7.8MB，
-  // 光预算本身就超过了约 5MB 的配额；而 folio.docs / folio.library 连字符预算都没有。
-  // 那不是保护，是装饰 —— 所以只要内容继续积累，撞墙是必然的。
-  const UTF16_BYTES = 2;
-  const bytesOf = s => (s || '').length * UTF16_BYTES;
-  const SNAPSHOT_BUDGET_BYTES = 900000;    // 约 45 万字符
-  const HISTORY_BUDGET_BYTES = 700000;     // 约 35 万字符
-  const DRAFT_FALLBACK_BYTES = 1200000;    // 仅在整份草稿都写不下时才截断
+  // 【配额单位是「字符」，不是字节】实测（Chrome 与 Edge 无头，逐步加块直到
+  // QuotaExceededError）：localStorage 的配额约 **5,242,827 个 UTF-16 码元**，
+  // 也就是浏览器标称的「5MB」——它按字符算，不是按字节算。
+  // （曾经按「1 字符 = 2 字节」折算成 10MB，那是错的，据此设的预算也跟着错。）
+  //
+  // 所以真正的问题不是「预算本身超配额」：快照 150 万 + 历史 120 万 + 草稿 120 万
+  // = 390 万字符，占配额 74%，偏高但没超。真正的原因是另外两条：
+  //   · folio.docs（所有打开标签的完整 HTML）与 folio.library（最多 200 篇完整 HTML）
+  //     **完全没有预算**，只限条数不限体积 —— 它们才是大头；
+  //   · 各键预算互相独立，没有任何合计上限，各守各的、加起来照样爆。
+  const LS_QUOTA_CHARS = 5242880;          // 实测 5,242,827，取 5 MiB 作为名义上限
+  const charsOf = s => (s || '').length;
+  const SNAPSHOT_BUDGET_CHARS = 1000000;   // 占配额约 19%
+  const HISTORY_BUDGET_CHARS = 700000;     // 约 13%
+  const DRAFT_FALLBACK_CHARS = 1000000;    // 仅在整份草稿都写不下时才截断
   const HISTORY_MAX = 50;
   const SNAPSHOT_MAX = 30;
   // 五个存完整 HTML 的键 —— 它们才是占用的大头。其余十个设置类键合计只有几 KB。
   // 用字面量而不是引用各自的 *_KEY 常量：那些常量声明在本文件更靠后的位置。
   const BIG_KEY_NAMES = ['folio.docs', 'folio.history', 'folio.draft', 'folio.snapshots', 'folio.library'];
-  // 这五个键的合计参考上限，只用于面板显示与预警，不做自动删除（见 reclaimSpace）
-  const BIG_KEYS_TOTAL_BYTES = 3200000;
+  // 这五个键的合计上限，只用于面板显示与预警，不做主动删除（见 reclaimSpace）
+  const BIG_KEYS_TOTAL_CHARS = 3600000;    // 占配额约 69%，给另外十个键留余量
 
-  // 各键当前占用（字节）。直接 getItem().length 每次按键都要复制几 MB 字符串，
+  // ===== 存储后端：大键进 IndexedDB，小键留在 localStorage =====
+  // 只搬这 5 个大键：它们存的是完整 HTML，是撞 5MB 墙的全部原因。
+  // 其余十个设置类键合计几 KB，留在 localStorage 既省事又能保持**同步读**
+  // （很多读取发生在启动和渲染路径上，改异步会扩散到几十个调用点）。
+  const STORE_DB = 'folio';
+  const STORE_STORE = 'kv';
+  const STORE_META_KEY = '__meta';
+  const STORE_OPEN_TIMEOUT = 3000;   // 见 idbOpenDb：某些环境下 open() 永不回调
+  let storageBackend = 'ls';
+  let storeDb = null;
+  let storeMeta = null;
+  let lastWriteFailed = false;
+  const memStore = new Map();        // key -> 字符串，与 localStorage 里存的东西同构
+
+  // 实测：file:// 下 indexedDB 对象存在，但 open() 既不回调 onsuccess 也不回调 onerror，
+  // 会一直挂着。没有超时兜底的话，双击打开本地文件这条用法会直接卡死在启动。
+  function idbOpenDb() {
+    return new Promise(resolve => {
+      let settled = false;
+      const done = v => { if (!settled) { settled = true; resolve(v); } };
+      const timer = setTimeout(() => done(null), STORE_OPEN_TIMEOUT);
+      try {
+        const req = indexedDB.open(STORE_DB, 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore(STORE_STORE); };
+        req.onsuccess = () => { clearTimeout(timer); done(req.result); };
+        req.onerror = () => { clearTimeout(timer); done(null); };
+        req.onblocked = () => { clearTimeout(timer); done(null); };
+      } catch (e) { clearTimeout(timer); done(null); }
+    });
+  }
+  function idbGet(key) {
+    return new Promise((resolve, reject) => {
+      const r = storeDb.transaction(STORE_STORE, 'readonly').objectStore(STORE_STORE).get(key);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+  }
+  function idbPutMany(pairs) {
+    return new Promise((resolve, reject) => {
+      const tx = storeDb.transaction(STORE_STORE, 'readwrite');
+      const st = tx.objectStore(STORE_STORE);
+      pairs.forEach(p => st.put(p[1], p[0]));
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+  function idbDel(key) {
+    return new Promise((resolve, reject) => {
+      const tx = storeDb.transaction(STORE_STORE, 'readwrite');
+      tx.objectStore(STORE_STORE).delete(key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  function storeGet(key) {
+    if (storageBackend === 'idb' && BIG_KEY_NAMES.indexOf(key) !== -1) {
+      return memStore.has(key) ? memStore.get(key) : null;
+    }
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+
+  // 立即落盘，不做 debounce。今天真实的持久化窗口本来就不是 0
+  // （scheduleDraftSave 有 800ms 防抖），IDB 只增加几毫秒的事务提交窗口，
+  // 比已有的 800ms 小得多。在这里再叠一层 debounce 等于把两个丢失窗口串起来。
+  function persistKey(key, value) {
+    if (!storeDb) return;
+    idbPutMany([[key, value]]).catch(() => {
+      // 异步失败必须报出来：storeSet 同步返回 true 是「内存已接受」，
+      // 如果这里不出声，整套失败处理就彻底失明了 —— 比改造前还差。
+      lastWriteFailed = true;
+      warnStorageFull();
+    });
+  }
+  function dropKey(key) {
+    if (!storeDb) return;
+    idbDel(key).catch(() => { lastWriteFailed = true; });
+  }
+
+  // 「有 IndexedDB 却打不开」时（超时 / onblocked），本轮会退回 localStorage 运行。
+  // 这时用户照常编辑，改动落在 localStorage；等下次 IDB 恢复可用，那些改动就会被
+  // IDB 里的旧数据盖过去 —— 一次会话的内容无声消失。
+  // 所以降级期间要**记下这一轮到底改了哪些大键**：只有这些键的 localStorage 副本
+  // 才算「更新的」，恢复时才有资格赢过 IDB；其余键的副本还是迁移时的旧货，不能拿来盖。
+  const LS_FALLBACK_KEY = 'folio.lsFallback';
+  function lsFallbackRead() {
+    try { return JSON.parse(localStorage.getItem(LS_FALLBACK_KEY) || 'null'); } catch (e) { return null; }
+  }
+  function lsFallbackMark(key) {
+    let m = lsFallbackRead();
+    if (!m || typeof m !== 'object') m = { at: Date.now(), keys: [] };
+    if (!Array.isArray(m.keys)) m.keys = [];
+    if (key && m.keys.indexOf(key) === -1) m.keys.push(key);
+    try { localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(m)); } catch (e) {}
+    return m;
+  }
+  function lsFallbackClear() { try { localStorage.removeItem(LS_FALLBACK_KEY); } catch (e) {} }
+  // transient=false 表示这个环境根本没有 IndexedDB（隐私模式 / 老浏览器）：
+  // 那是预期内的降级，不是故障，不必留标记、也不必提示。
+  function fallbackToLS(transient) {
+    if (transient) lsFallbackMark(null);
+    // 一并把后端状态落回 ls：不然「重跑一次 initStorage 但失败」会留下
+    // storageBackend 仍是 idb 的不一致状态（生产里只跑一次，但测试会重跑）
+    storeDb = null;
+    storageBackend = 'ls';
+    return 'ls';
+  }
+
+  // 首次启动把遗留的 localStorage 数据搬进 IDB。
+  // 三条不变量：
+  //   · 全程只读 localStorage，**绝不删除**（删除是面板里一个独立、显式的动作）
+  //   · __meta 标记存在 IDB 里，不能存 localStorage —— 存那边一旦被清掉，
+  //     下次启动会拿过期的 localStorage 盖掉新鲜的 IDB 数据，静默丢数据
+  //   · 任何失败分支都退回 localStorage 照常工作，不存在「两边都没有」的路径
+  async function initStorage() {
+    // 环境压根没有 IDB → 预期内的降级，不留标记
+    if (typeof indexedDB === 'undefined') return fallbackToLS(false);
+    const db = await idbOpenDb();
+    if (!db) return fallbackToLS(true);   // 超时 / 被阻塞：属于故障，要记标记
+
+    storeDb = db;
+    try {
+      storeMeta = (await idbGet(STORE_META_KEY)) || null;
+      const legacy = [];
+      BIG_KEY_NAMES.forEach(k => {
+        try { if (localStorage.getItem(k) !== null) legacy.push(k); } catch (e) {}
+      });
+      // 搬运**只在从未成功迁移过时**才做。这一条是必须的，不是优化：
+      // 迁移故意保留 localStorage 旧副本作为保险；若每次启动都去补搬「IDB 里没有的键」，
+      // 那么用户**在 IDB 里删掉**的任何东西都会被旧副本灌回去 —— 删了的东西自己回来。
+      // （已实测复现：清空文档后刷新，旧草稿又冒出来。）
+      // 中断续跑仍然成立：migrated 只有在「所有遗留键都确认进了 IDB」之后才置 true。
+      if (!storeMeta || storeMeta.migrated !== true) {
+        const toCopy = [];
+        for (const k of legacy) {
+          if ((await idbGet(k)) !== undefined) continue;
+          let v = null;
+          try { v = localStorage.getItem(k); } catch (e) {}
+          if (v !== null) toCopy.push([k, v]);
+        }
+        if (toCopy.length) {
+          if (!storeMeta) {
+            storeMeta = { schemaVersion: 1, migrated: false, startedAt: Date.now() };
+            await idbPutMany([[STORE_META_KEY, storeMeta]]);
+          }
+          try {
+            await idbPutMany(toCopy);
+          } catch (e) {
+            return fallbackToLS(true);   // 搬不动就原地退回：localStorage 一个字节都没动
+          }
+          for (const p of toCopy) {          // 逐个校验，全等才算搬成功
+            if ((await idbGet(p[0])) !== p[1]) return fallbackToLS(true);
+          }
+        }
+        // 收尾：确认遗留数据都**已经进到 IDB**，再落标记——判据是「存在」而不是
+        // 「逐字节相同」。迁移之后用户正常编辑，IDB 必然与 localStorage 那份旧副本不同；
+        // 若按「相同」判，标记会永远停在 false，每次启动都白跑一遍迁移逻辑。
+        // （「不删旧副本」和「清理前逐字节校验」是另外两件事，见 cleanLegacyCopies。）
+        if (storeMeta && storeMeta.migrated === false) {
+          let allThere = true;
+          for (const k of legacy) {
+            if ((await idbGet(k)) === undefined) { allThere = false; break; }
+          }
+          if (allThere) {
+            storeMeta = Object.assign({}, storeMeta, { migrated: true, verifiedAt: Date.now(), keys: legacy });
+            await idbPutMany([[STORE_META_KEY, storeMeta]]);
+          }
+        }
+      }
+      // 上一轮是「有 IDB 却用不上」的降级，而这一轮 IDB 又能用了：
+      // 只把那一轮**真的改过、且内容确实不同**的键以 localStorage 为准搬回 IDB。
+      const fb = lsFallbackRead();
+      if (fb && Array.isArray(fb.keys) && fb.keys.length) {
+        const restore = [];
+        for (const k of fb.keys) {
+          if (BIG_KEY_NAMES.indexOf(k) === -1) continue;
+          let v = null;
+          try { v = localStorage.getItem(k); } catch (e) {}
+          if (v !== null && v !== (await idbGet(k))) restore.push([k, v]);
+        }
+        if (restore.length) {
+          try {
+            await idbPutMany(restore);
+            let ok = true;
+            for (const pp of restore) if ((await idbGet(pp[0])) !== pp[1]) { ok = false; break; }
+            if (ok) setTimeout(() => showToast('已把上次降级运行时改动的 ' + restore.length + ' 项内容并入 IndexedDB', 8000), 1500);
+          } catch (e) {}
+        }
+        lsFallbackClear();
+      }
+      for (const k of BIG_KEY_NAMES) {
+        const v = await idbGet(k);
+        if (typeof v === 'string') memStore.set(k, v);
+      }
+      storageBackend = 'idb';
+      return 'idb';
+    } catch (e) {
+      return fallbackToLS(true);
+    }
+  }
+  const storageReady = initStorage();
+  // 有 IndexedDB 却没用上（打不开/超时）→ 必须说出来。否则用户会在「以为已经
+  // 不再受 5MB 限制」的前提下继续用，直到写不进去才发现。
+  // 完全不支持 IDB 的环境（隐私模式/老浏览器）不提示：那是预期内的降级，不是故障。
+  storageReady.then(mode => {
+    if (mode === 'ls' && typeof indexedDB !== 'undefined') {
+      setTimeout(() => showToast('存储后端打开失败，本次以本地存储运行（约 5MB 上限）；建议刷新页面重试', 8000), 1500);
+    }
+  }).catch(() => {});
+
+  // 申请持久化存储，避免浏览器在磁盘紧张时回收 IndexedDB 里的数据。
+  // Chrome 要求必须在用户手势之后调用，所以挂在第一次交互上，只调一次。
+  let persistAsked = false;
+  function askPersist() {
+    if (persistAsked) return;
+    persistAsked = true;
+    try {
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then(ok => {
+          if (!storeDb) return;
+          // 先重读一次再合并：直接拿内存里的 storeMeta 做读-改-写，
+          // 会把 initStorage 刚写进去的 migrated / keys / verifiedAt 覆盖回去
+          idbGet(STORE_META_KEY).then(cur => {
+            storeMeta = Object.assign({}, cur || storeMeta || {}, { persisted: !!ok });
+            return idbPutMany([[STORE_META_KEY, storeMeta]]);
+          }).catch(() => {});
+        }).catch(() => {});
+      }
+    } catch (e) {}
+  }
+  window.addEventListener('pointerdown', askPersist);
+  window.addEventListener('keydown', askPersist);
+
+  // 只有「IDB 里的值与 localStorage 那份**内容完全一致**」才允许删掉 localStorage 副本。
+  // 这个校验一步都不能省：删错是不可逆的数据丢失，而那份副本正是目前唯一的退路。
+  async function cleanLegacyCopies() {
+    const removed = [], kept = [];
+    if (storageBackend !== 'idb') return { removed: removed, kept: kept };
+    for (const k of BIG_KEY_NAMES) {
+      let local = null;
+      try { local = localStorage.getItem(k); } catch (e) { continue; }
+      if (local === null) continue;
+      let remote;
+      try { remote = await idbGet(k); } catch (e) { kept.push(k); continue; }
+      if (remote === local) {
+        // 删掉的是缓存条目而不是置 0：IDB 模式下 sizeOf(k) 反映的是 memStore 的大小，
+        // 置 0 会让「已裁剪快照/历史，释放约 0 字符」这种读数出错
+        try { localStorage.removeItem(k); sizeCache.delete(k); removed.push(k); } catch (e) { kept.push(k); }
+      } else {
+        kept.push(k);   // 两边不一致 → 留着，绝不赌哪份是新的
+      }
+    }
+    return { removed: removed, kept: kept };
+  }
+
+  // 各键当前占用（字符数）。直接 getItem().length 每次按键都要复制几 MB 字符串，
   // 所以按写入增量维护缓存；只反映本标签页自己的写入（跨标签不同步，与今天的行为一致）。
   const sizeCache = new Map();
   function sizeOf(key) {
-    if (!sizeCache.has(key)) {
-      try { sizeCache.set(key, bytesOf(localStorage.getItem(key))); } catch (e) { sizeCache.set(key, 0); }
-    }
+    if (!sizeCache.has(key)) sizeCache.set(key, charsOf(storeGet(key)));
     return sizeCache.get(key);
   }
-  function bigKeysBytes() { return BIG_KEY_NAMES.reduce((n, k) => n + sizeOf(k), 0); }
 
-  function clipHtml(html, limitBytes) {
-    if (!html || bytesOf(html) <= limitBytes) return html;
-    return html.slice(0, Math.floor(limitBytes / UTF16_BYTES));
+  function clipHtml(html, limitChars) {
+    if (!html || charsOf(html) <= limitChars) return html;
+    return html.slice(0, limitChars);
   }
   // 自最新往回累加，超出预算的旧版本丢弃；无论多大都至少保住最新一份
-  function trimByBudget(list, budgetBytes, maxCount) {
+  function trimByBudget(list, budgetChars, maxCount) {
     const out = [];
     let used = 0;
     for (const item of list) {
       if (out.length >= maxCount) break;
-      const size = bytesOf(item.html);
-      if (out.length && used + size > budgetBytes) break;
+      const size = charsOf(item.html);
+      if (out.length && used + size > budgetChars) break;
       out.push(item);
       used += size;
     }
@@ -2754,15 +3016,25 @@
   }
 
   function safeSet(key, value) {
+    // 大键走 IndexedDB：内存镜像立即生效、异步落盘。注意这个同步返回值只说
+    // 「内存已接受」—— 真正的写盘失败是异步的，由 persistKey 的 catch 报出来。
+    if (storageBackend === 'idb' && BIG_KEY_NAMES.indexOf(key) !== -1) {
+      memStore.set(key, value);
+      sizeCache.set(key, charsOf(value));
+      persistKey(key, value);
+      return true;
+    }
+    // 降级运行期间改过的大键要记账，供下次 IDB 恢复时合并回来
+    if (storageBackend === 'ls' && BIG_KEY_NAMES.indexOf(key) !== -1 && lsFallbackRead()) lsFallbackMark(key);
     try {
       localStorage.setItem(key, value);
-      sizeCache.set(key, bytesOf(value));
+      sizeCache.set(key, charsOf(value));
       return true;
     } catch (e) {
       if (!reclaiming && BIG_KEY_NAMES.indexOf(key) !== -1 && reclaimSpace()) {
         try {
           localStorage.setItem(key, value);
-          sizeCache.set(key, bytesOf(value));
+          sizeCache.set(key, charsOf(value));
           showToast('存储接近上限，已自动精简较早的历史/快照以腾出空间', 4000);
           return true;
         } catch (e2) { return false; }
@@ -2771,7 +3043,48 @@
     }
   }
   function safeRemove(key) {
+    if (storageBackend === 'idb' && BIG_KEY_NAMES.indexOf(key) !== -1) {
+      memStore.delete(key);
+      sizeCache.set(key, 0);
+      dropKey(key);
+      return;
+    }
+    if (storageBackend === 'ls' && BIG_KEY_NAMES.indexOf(key) !== -1 && lsFallbackRead()) lsFallbackMark(key);
     try { localStorage.removeItem(key); sizeCache.set(key, 0); } catch (e) {}
+  }
+
+  // 需要「如实回答到底有没有真写下去」的场合用它：等事务真正完成再返回布尔值。
+  // 多数写入不需要（内存镜像已生效、失败有统一告警），但凡是**明确许诺成功**的提示
+  // 都必须先确认写下去了 —— 否则在 IDB 模式下 safeSet 永远同步返回 true，
+  // 「已存入知识库」又会变回假报成功，正是这次要修的那个 bug。
+  // 每个键一个单调递增的写入序号。回滚前先确认「这次写入仍是最新的」——
+  // 否则一次迟到的失败会把**更新的值**覆盖回旧的（同一键并发写时会发生，
+  // 例如连点两次「存入知识库」，或存库与删除知识库条目撞在一起）。
+  const writeSeq = new Map();
+  async function storeSetDurable(key, value) {
+    // 先等后端确定。启动水合期间 storageBackend 还是 'ls'，此时写下去会落到
+    // localStorage，而水合完成后读的是 IndexedDB —— 用户会看到「提示已存入知识库、
+    // 列表里却没有」。那正是本功能要修掉的假报成功，不能在水合窗口里又冒出来。
+    try { await storageReady; } catch (e) {}
+    if (storageBackend === 'idb' && BIG_KEY_NAMES.indexOf(key) !== -1) {
+      const prev = memStore.has(key) ? memStore.get(key) : null;
+      const seq = (writeSeq.get(key) || 0) + 1;
+      writeSeq.set(key, seq);
+      const rollback = () => {
+        // 写盘没成功就把内存镜像回滚回去。否则会留下「界面说失败、内存里却已经有了」
+        // 的不一致状态 —— 而且下一次成功的写入会把这条幽灵数据一起落盘。
+        if (writeSeq.get(key) !== seq) return;   // 已有更新的写入，别用旧值覆盖
+        if (prev === null) { memStore.delete(key); sizeCache.set(key, 0); }
+        else { memStore.set(key, prev); sizeCache.set(key, charsOf(prev)); }
+        lastWriteFailed = true;
+        warnStorageFull();
+      };
+      memStore.set(key, value);
+      sizeCache.set(key, charsOf(value));
+      if (!storeDb) { rollback(); return false; }
+      return idbPutMany([[key, value]]).then(() => true).catch(() => { rollback(); return false; });
+    }
+    return safeSet(key, value);
   }
   let storageWarned = false;
   function warnStorageFull() {
@@ -2784,7 +3097,7 @@
   }
 
   function getHistory() {
-    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(storeGet(HISTORY_KEY) || '[]'); } catch (e) { return []; }
   }
   function setHistory(list) { if (!safeSet(HISTORY_KEY, JSON.stringify(list))) warnStorageFull(); }
 
@@ -2800,7 +3113,7 @@
     };
     if (safeSet(DRAFT_KEY, JSON.stringify(rec))) return;
     // 整份都存不下（文档极大）→ 退回截断版并打标，恢复时明确提醒用户，绝不静默恢复半份
-    rec.html = clipHtml(html, DRAFT_FALLBACK_BYTES);
+    rec.html = clipHtml(html, DRAFT_FALLBACK_CHARS);
     rec.truncated = true;
     if (!safeSet(DRAFT_KEY, JSON.stringify(rec))) warnStorageFull();
   }
@@ -2818,10 +3131,22 @@
   editor.addEventListener('input', scheduleDraftSave);
   source.addEventListener('input', scheduleDraftSave);
   window.addEventListener('beforeunload', takeSnapshot);
+  // 退出前尽力落盘。IDB 是异步的，页面拆除时事务**不保证**提交，所以这只是尽力而为，
+  // 不能当成保证 —— 真正的兜底仍是上面那条 800ms 自动保存。
+  // 挂 pagehide 与 visibilitychange 两个口子，是因为不同浏览器的时机不一样。
+  function flushBeforeHide() {
+    try { saveDraft(); } catch (e) {}
+    try { takeSnapshot(); } catch (e) {}
+    try { saveDocsState(); } catch (e) {}
+  }
+  window.addEventListener('pagehide', flushBeforeHide);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushBeforeHide();
+  });
 
   function restoreDraft() {
     let draft = null;
-    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
+    try { draft = JSON.parse(storeGet(DRAFT_KEY) || 'null'); } catch (e) {}
     if (draft && draft.html) {
       editor.innerHTML = draft.html;
       currentFileBase = draft.file || null;
@@ -2844,7 +3169,7 @@
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 120),
       savedAt: Date.now()
     });
-    setHistory(trimByBudget(hist, HISTORY_BUDGET_BYTES, HISTORY_MAX));
+    setHistory(trimByBudget(hist, HISTORY_BUDGET_CHARS, HISTORY_MAX));
   }
 
   const historyModal = document.getElementById('history-modal');
@@ -2933,7 +3258,7 @@
   // 用户可能会随手发出去；换设备后重新填一次更安全。
   function exportBackup() {
     let draft = null;
-    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
+    try { draft = JSON.parse(storeGet(DRAFT_KEY) || 'null'); } catch (e) {}
     const data = {
       app: 'folio',
       version: 4,
@@ -3021,10 +3346,18 @@
     'folio.beautify': '美化设置', 'folio.pdfOpts': 'PDF 导出设置', 'folio.splitPrefs': '分屏记忆',
     'folio.selOff': '划词关闭记录', 'folio.zoom': '纸面缩放', 'folio.translate': '翻译设置（含 API 密钥）'
   };
+  // 字节格式化：只用于 navigator.storage.estimate() 的返回（那个确实是字节）
   function fmtBytes(n) {
     if (n >= 1048576) return (n / 1048576).toFixed(2) + ' MB';
     if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
     return n + ' B';
+  }
+  // localStorage 的配额按**字符**（UTF-16 码元）计，浏览器把它标称「5MB」。
+  // 所以这里直接报字符数并给出占上限的百分比 —— 换一套 MB 换算只会对不上。
+  function fmtChars(n) { return (n || 0).toLocaleString('en-US') + ' 字符'; }
+  function quotaPct(n) {
+    var p = (n || 0) / LS_QUOTA_CHARS * 100;
+    return (p > 0 && p < 0.1 ? '<0.1' : p.toFixed(1)) + '%';
   }
   function storageRowCount(raw) {
     if (raw == null) return '—';
@@ -3037,43 +3370,69 @@
     return '—';
   }
   function renderStorage() {
-    let rows = [];
-    let total = 0;
+    const usingIdb = storageBackend === 'idb';
+    // 大键的占用取自**当前后端**（IDB 模式下走内存镜像，不是 localStorage）
+    const bigRows = BIG_KEY_NAMES.map(k => ({ k: k, raw: storeGet(k), bytes: charsOf(storeGet(k)) }))
+      .sort((a, b) => b.bytes - a.bytes);
+    const big = bigRows.reduce((n, r) => n + r.bytes, 0);
+
+    // localStorage 侧：设置类小键，以及已迁移但还没清掉的旧副本
+    let lsRows = [], lsTotal = 0, legacyBytes = 0;
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k || k.indexOf('folio.') !== 0) continue;
         const raw = localStorage.getItem(k);
-        const bytes = bytesOf(raw);
-        total += bytes;
-        rows.push({ k: k, raw: raw, bytes: bytes });
+        const bytes = charsOf(raw);
+        lsTotal += bytes;
+        if (BIG_KEY_NAMES.indexOf(k) !== -1) legacyBytes += bytes;
+        lsRows.push({ k: k, raw: raw, bytes: bytes });
       }
     } catch (e) {}
-    rows.sort((a, b) => b.bytes - a.bytes);
+    lsRows.sort((a, b) => b.bytes - a.bytes);
+    lsRows = lsRows.filter(r => BIG_KEY_NAMES.indexOf(r.k) === -1);
 
-    const big = rows.reduce((n, r) => n + (BIG_KEY_NAMES.indexOf(r.k) !== -1 ? r.bytes : 0), 0);
-    const over = big > BIG_KEYS_TOTAL_BYTES;
+    const over = !usingIdb && big > BIG_KEYS_TOTAL_CHARS;
     let html = '<div class="sto-sum">' +
-      '<div class="sto-line"><b>localStorage 合计</b><span>' + fmtBytes(total) + '</span></div>' +
-      '<div class="sto-line' + (over ? ' warn' : '') + '"><b>其中存正文的 5 个键</b><span>' +
-        fmtBytes(big) + ' / 参考上限 ' + fmtBytes(BIG_KEYS_TOTAL_BYTES) + '</span></div>' +
+      '<div class="sto-line"><b>存储后端</b><span>' +
+        (usingIdb ? 'IndexedDB（容量大得多）' : 'localStorage（回退模式）') + '</span></div>' +
+      '<div class="sto-line"><b>文档数据占用</b><span>' + fmtChars(big) + '</span></div>' +
+      '<div class="sto-line' + (over ? ' warn' : '') + '"><b>localStorage 合计</b><span>' + fmtChars(lsTotal) +
+        '（占上限 ' + quotaPct(lsTotal) + '）' +
+        (legacyBytes ? '，含旧副本 ' + fmtChars(legacyBytes) : '') +
+        (!usingIdb ? '，参考上限 ' + fmtChars(BIG_KEYS_TOTAL_CHARS) : '') + '</span></div>' +
       '<div class="sto-line" id="sto-origin"><b>浏览器报告本站已用</b><span>统计中…</span></div>' +
       '</div>';
-    html += '<table class="sto-table"><thead><tr><th>内容</th><th>条数</th><th>占用</th></tr></thead><tbody>';
-    if (!rows.length) html += '<tr><td colspan="3">（还没有任何数据）</td></tr>';
-    rows.forEach(r => {
-      const isBig = BIG_KEY_NAMES.indexOf(r.k) !== -1;
-      html += '<tr><td>' + escapeHtml(STORAGE_LABELS[r.k] || '（未知）') +
-              '<span class="sto-key">' + escapeHtml(r.k) + '</span></td>' +
-              '<td>' + escapeHtml(storageRowCount(r.raw)) + '</td>' +
-              '<td>' + fmtBytes(r.bytes) + (isBig ? ' <span class="sto-badge">大</span>' : '') + '</td></tr>';
-    });
-    html += '</tbody></table>';
-    html += '<p class="sto-note">浏览器给 localStorage 的上限约 <b>5MB</b>，且按 UTF-16 计费（一个字符算 2 字节）。' +
-            '这里显示的是实际占用。<b>清理只是腾地方，撞到上限还会再来</b> —— 彻底解决要把正文搬到容量大得多的 IndexedDB，已列入计划。</p>' +
-            '<p class="sto-note">「浏览器报告本站已用」统计的是<b>整个网站</b>（含缓存等），不只 localStorage。' +
+
+    function table(rows, badge) {
+      if (!rows.length) return '<p class="sto-note">（无）</p>';
+      let h = '<table class="sto-table"><thead><tr><th>内容</th><th>条数</th><th>占用</th></tr></thead><tbody>';
+      rows.forEach(r => {
+        h += '<tr><td>' + escapeHtml(STORAGE_LABELS[r.k] || '（未知）') +
+             '<span class="sto-key">' + escapeHtml(r.k) + '</span></td>' +
+             '<td>' + escapeHtml(storageRowCount(r.raw)) + '</td>' +
+             '<td>' + fmtChars(r.bytes) + (badge ? ' <span class="sto-badge">旧副本</span>' : '') + '</td></tr>';
+      });
+      return h + '</tbody></table>';
+    }
+    html += '<h4 class="sto-h">文档数据（' + (usingIdb ? 'IndexedDB' : 'localStorage') + '）</h4>' + table(bigRows, false);
+    if (usingIdb) html += '<h4 class="sto-h">localStorage（设置项）</h4>' + table(lsRows, false);
+
+    html += '<p class="sto-note">文档正文、历史、快照、知识库现在存在 <b>IndexedDB</b> 里，容量比 localStorage 大几个数量级，' +
+            '不会再撞上限。localStorage 只留设置类小键（几 KB）。</p>';
+    html += '<p class="sto-note">localStorage 的配额按<b>字符</b>算（UTF-16 码元），实测约 <b>' +
+            LS_QUOTA_CHARS.toLocaleString('en-US') + ' 字符</b>，浏览器把它标称「5MB」。' +
+            '所以上面报的是字符数与占上限的百分比，不做 MB 换算。</p>';
+    if (usingIdb && legacyBytes) {
+      html += '<p class="sto-note">localStorage 里还留着 <b>' + fmtChars(legacyBytes) + '</b> 的旧副本（迁移时的保险，从未被删除）。' +
+              '现在数据已在 IndexedDB 里，可以放心清理这些旧副本腾出空间。</p>';
+    }
+    html += '<p class="sto-note">「浏览器报告本站已用」统计的是<b>整个网站</b>（含缓存等），不只本地存储 —— 那个数字才是字节。' +
             '翻译 / LLM 的 API 密钥不会写进备份文件（备份是明文 JSON），换设备后请在「⚙ 翻译」里重新填写。</p>';
     storageBody.innerHTML = html;
+
+    const legacyBtn = document.getElementById('storage-clean-legacy');
+    if (legacyBtn) legacyBtn.hidden = !(usingIdb && legacyBytes > 0);
 
     if (navigator.storage && navigator.storage.estimate) {
       navigator.storage.estimate().then(est => {
@@ -3111,7 +3470,19 @@
     setSnapshots(list.slice(0, 5));
     renderVersions();
     renderStorage();
-    showToast('已裁剪快照，释放约 ' + fmtBytes(Math.max(0, before - sizeOf(SNAPSHOTS_KEY))));
+    showToast('已裁剪快照，释放约 ' + fmtChars(Math.max(0, before - sizeOf(SNAPSHOTS_KEY))));
+  });
+  document.getElementById('storage-clean-legacy').addEventListener('click', async () => {
+    const legacy = window.__folioStorage.legacyInLocalStorage();
+    if (!legacy.length) { showToast('没有可清理的旧副本'); return; }
+    if (!(await confirmDialog('清理 localStorage 里的 ' + legacy.length + ' 份旧副本？只有与 IndexedDB 内容完全一致的才会被删除，不一致的会自动保留。删掉只影响浏览器本地占用，不影响你的文档。'))) return;
+    const res = await cleanLegacyCopies();
+    renderStorage();
+    if (res.kept.length) {
+      showToast('已清理 ' + res.removed.length + ' 份；另有 ' + res.kept.length + ' 份两边内容不一致，已保留（不敢替你赌哪份更新）', 7000);
+    } else {
+      showToast('已清理 ' + res.removed.length + ' 份旧副本，localStorage 空间已腾出');
+    }
   });
   document.getElementById('storage-trim-hist').addEventListener('click', async () => {
     const list = getHistory();
@@ -3121,13 +3492,13 @@
     setHistory(list.slice(0, 10));
     renderHistory();
     renderStorage();
-    showToast('已裁剪历史，释放约 ' + fmtBytes(Math.max(0, before - sizeOf(HISTORY_KEY))));
+    showToast('已裁剪历史，释放约 ' + fmtChars(Math.max(0, before - sizeOf(HISTORY_KEY))));
   });
 
   // ===== 版本快照 =====
   const SNAPSHOTS_KEY = 'folio.snapshots';
   function getSnapshots() {
-    try { return JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(storeGet(SNAPSHOTS_KEY) || '[]'); } catch (e) { return []; }
   }
   function setSnapshots(list) { if (!safeSet(SNAPSHOTS_KEY, JSON.stringify(list))) warnStorageFull(); }
   // 写入失败时只降级到「保留最新一份」再试一次，最多两次序列化。
@@ -3153,7 +3524,7 @@
       text: (mode === 'source' ? source.value : editor.innerText).slice(0, 120),
       savedAt: Date.now()
     });
-    if (!setSnapshotsSafe(trimByBudget(snaps, SNAPSHOT_BUDGET_BYTES, SNAPSHOT_MAX))) warnStorageFull();
+    if (!setSnapshotsSafe(trimByBudget(snaps, SNAPSHOT_BUDGET_CHARS, SNAPSHOT_MAX))) warnStorageFull();
   }
 
   const versionsModal = document.getElementById('versions-modal');
@@ -3238,7 +3609,7 @@
   const CAT_ALL = '__all__', CAT_NONE = '__none__';
   let libFilter = CAT_ALL, libQuery = '', libDocs = [];
 
-  function getLibrary() { try { return JSON.parse(localStorage.getItem(LIBRARY_KEY) || '[]'); } catch (e) { return []; } }
+  function getLibrary() { try { return JSON.parse(storeGet(LIBRARY_KEY) || '[]'); } catch (e) { return []; } }
   // 返回布尔值：调用方必须据此决定提示什么。
   // 早先返回 undefined，于是「存入知识库」那条路径无论写盘成败都弹「已存入知识库」——
   // 用户看到成功提示，文档却不在库里（列表是从存储回读的），属于静默数据丢失。
@@ -3419,7 +3790,7 @@
   document.getElementById('lib-save-cat').addEventListener('change', (e) => {
     document.getElementById('lib-save-newcat-wrap').hidden = e.target.value !== '__new__';
   });
-  document.getElementById('lib-save-confirm').addEventListener('click', () => {
+  document.getElementById('lib-save-confirm').addEventListener('click', async () => {
     if (contentEmpty()) { showToast('当前没有内容可保存'); return; }
     const title = document.getElementById('lib-save-title-input').value.trim() || '未命名';
     let cat = document.getElementById('lib-save-cat').value;
@@ -3433,7 +3804,9 @@
     const lib = getLibrary();
     lib.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title, category: cat, html: getExportHtml(), text: (mode === 'source' ? source.value : editor.innerText).slice(0, 160), savedAt: Date.now(), updatedAt: Date.now() });
     const capped = lib.length > LIB_MAX;
-    const stored = setLibrary(lib.slice(0, LIB_MAX));
+    // 用 storeSetDurable 而不是 setLibrary：这条路径会弹「已存入知识库」，
+    // 必须等写盘真的成功（IDB 是异步的，同步返回的 true 只代表内存接受了）
+    const stored = await storeSetDurable(LIBRARY_KEY, JSON.stringify(lib.slice(0, LIB_MAX)));
     // 写盘失败时**不关弹窗**：关掉就等于把用户刚输入的内容也丢了
     if (!stored) { showToast('存储空间不足，未能存入知识库。请先在「历史 → 存储占用」清理，或导出备份', 7000); return; }
     libSaveModal.hidden = true;
@@ -6003,34 +6376,77 @@ $$\\text{MOS (%)} = \\frac{10,000 - 6,250}{10,000} = 37.5%$$
 
 更多信息请访问 [示例链接](https://example.com)。`;
 
-  // 启动：优先恢复持久化的多标签；没有则恢复单草稿作为第一个标签
-  let restored = false;
-  try {
-    const saved = JSON.parse(localStorage.getItem(DOCS_KEY) || 'null');
-    if (saved && Array.isArray(saved.docs) && saved.docs.length) {
-      docs = saved.docs;
-      activeDocId = saved.activeDocId && docById(saved.activeDocId) ? saved.activeDocId : docs[0].id;
-      const d = docById(activeDocId);
-      if (d) {
-        editor.innerHTML = d.html;
-        currentFileBase = d.file || null;
+  // ===== 启动 =====
+  // 必须等存储水合完成再恢复文档：大键现在从 IndexedDB 出，是异步的。
+  // 只把这一段包进 async 函数 —— **不能包整个脚本**：顶层 const/function 是
+  // tools/ 下各 case_*.js 按裸名访问的，包起来会把所有用例打断。
+  // 另外四处解析期读取（zoom / 专注心跳 / 美化开关 / PDF 参数）读的都是留在
+  // localStorage 的小键，不受水合影响，无需搬动。
+  let resolveFolioReady;
+  window.__folioReady = new Promise(r => { resolveFolioReady = r; });
+  // 测试与排障用的句柄：顶层 const/let 不在 window 上，外部拿不到
+  window.__folioStorage = {
+    get: k => storeGet(k),
+    set: (k, v) => safeSet(k, v),
+    keys: () => BIG_KEY_NAMES.slice(),
+    mode: () => storageBackend,
+    meta: () => storeMeta,
+    lastWriteFailed: () => lastWriteFailed,
+    legacyInLocalStorage: () => BIG_KEY_NAMES.filter(k => {
+      try { return localStorage.getItem(k) !== null; } catch (e) { return false; }
+    }),
+    clearLegacy: () => BIG_KEY_NAMES.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} })
+  };
+
+  // 水合是异步的，而所有监听器在解析期就已生效 —— 这期间用户完全可能已经
+  // 往编辑器里粘贴或打开了一份文件。所以先记下编辑器此刻的内容，恢复时用它判断。
+  const editorAtBoot = editor.innerHTML;
+
+  (async function boot() {
+    try {
+      try { await storageReady; } catch (e) {}
+      // 水合期间用户已经动过编辑器 → 以他的实时内容为准，绝不用磁盘上的旧文档覆盖
+      const editorTouched = editor.innerHTML !== editorAtBoot;
+      // 优先恢复持久化的多标签；没有则恢复单草稿作为第一个标签
+      let restored = false;
+      try {
+        const saved = JSON.parse(storeGet(DOCS_KEY) || 'null');
+        if (saved && Array.isArray(saved.docs) && saved.docs.length) {
+          docs = saved.docs;
+          activeDocId = saved.activeDocId && docById(saved.activeDocId) ? saved.activeDocId : docs[0].id;
+          const d = docById(activeDocId);
+          if (d) {
+            if (editorTouched) d.html = editor.innerHTML;   // 保住用户刚放进去的内容
+            else editor.innerHTML = d.html;
+            currentFileBase = d.file || null;
+          }
+          showDocbar();
+          renderDocTabs();
+          updateStatus();
+          if (docs.length > 1) showToast('已恢复 ' + docs.length + ' 个标签');
+          restored = true;
+        }
+      } catch (e) {}
+      if (!restored) {
+        if (!editorTouched) restoreDraft();   // 用户已有内容时，不去恢复旧草稿盖掉它
+        if (!docs.length) {
+          docs.push({ id: genId(), html: editor.innerHTML, file: currentFileBase, title: docTitleFromHtml(editor.innerHTML) || currentFileBase || fallbackDocTitle() });
+          activeDocId = docs[0].id;
+        }
+        renderDocTabs();
+        updateStatus();
       }
-      showDocbar();
-      renderDocTabs();
-      updateStatus();
-      if (docs.length > 1) showToast('已恢复 ' + docs.length + ' 个标签');
-      restored = true;
+      // 水合期间产生的内容立刻写入当前后端，别让它只活在编辑器里
+      if (editorTouched) { try { saveDocsState(); } catch (e) {} }
+      try { renderAllAnnots(); } catch (e) {}
+    } catch (e) {
+      console.warn('[Folio] 启动恢复失败', e);
+    } finally {
+      // 放在 finally：任何异常都不能让 __folioReady 永远不 resolve，
+      // 否则文档永远不恢复、测试也只会看到「等结果超时」
+      resolveFolioReady(storageBackend);
     }
-  } catch (e) {}
-  if (!restored) {
-    restoreDraft();
-    if (!docs.length) {
-      docs.push({ id: genId(), html: editor.innerHTML, file: currentFileBase, title: docTitleFromHtml(editor.innerHTML) || currentFileBase || fallbackDocTitle() });
-      activeDocId = docs[0].id;
-    }
-    renderDocTabs();
-    updateStatus();
-  }
+  })();
 </script>
 </body>
 </html>
