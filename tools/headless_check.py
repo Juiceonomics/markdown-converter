@@ -1,10 +1,12 @@
-# 可复用的无头 Chrome 校验：加载 index.html，注入 JS，回传注入脚本打印的结果。
+# 可复用的无头浏览器校验：加载 index.html，注入 JS，回传注入脚本打印的结果。
 # 注入脚本需自行输出以 FAIL 开头的行表示失败；本脚本据此决定退出码（有 FAIL → 1）。
 # 用法: python tools/headless_check.py <注入JS文件>
+#   默认用 Chrome；可用环境变量指定其它 Chromium 浏览器，例如在 Edge 上跑：
+#     FOLIO_BROWSER="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" python tools/headless_check.py tools/case_x.js
 import os, re, subprocess, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+CHROME = os.environ.get("FOLIO_BROWSER") or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 SRC = os.path.join(REPO, "index.html")
 
 def run(inject_js: str) -> str:
