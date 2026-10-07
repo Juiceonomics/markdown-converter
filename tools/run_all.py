@@ -36,14 +36,15 @@ for label, exe in BROWSERS:
             failed.append("%s / %s" % (label, c))
         print("  %-22s %2d PASS  %d FAIL  %s" % (c, p, f, "OK" if ok else "失败"))
 
-    r = subprocess.run([sys.executable, os.path.join(TOOLS, "print_check.py")],
-                       capture_output=True, text=True, env=env,
-                       encoding="utf-8", errors="replace", timeout=300)
-    ok = (r.returncode == 0)
-    if not ok:
-        failed.append("%s / print_check.py" % label)
-    body = [l for l in (r.stdout or "").split("\n") if "结论" in l]
-    print("  %-22s %s" % ("print_check.py", body[-1].strip() if body else "无输出"))
+    for tool in ("print_check.py", "print_doc_check.py"):
+        r = subprocess.run([sys.executable, os.path.join(TOOLS, tool)],
+                           capture_output=True, text=True, env=env,
+                           encoding="utf-8", errors="replace", timeout=300)
+        ok = (r.returncode == 0)
+        if not ok:
+            failed.append("%s / %s" % (label, tool))
+        body = [l for l in (r.stdout or "").split("\n") if "结论" in l]
+        print("  %-22s %s" % (tool, body[-1].strip() if body else "无输出"))
     print("")
 
 print("=" * 70)
