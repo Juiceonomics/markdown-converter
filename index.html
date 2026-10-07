@@ -5460,11 +5460,35 @@ ${bodyHtml}
   //（position:fixed + 极高 z-index）不受本应用样式管辖，会被一起打进 PDF 并遮挡正文。
   // 改为把「正文 + 打印样式」写进一个离屏 iframe 再打印它 —— 扩展注入的是主文档，
   // iframe 里天然没有它们（连注入到正文区内部的也一并排除）。
+  // 从样式文本中剥掉所有 @media 块（花括号配对，能处理嵌套规则）。
+  // 为什么必须剥：主文档的 @media print 里写着针对「应用自身 DOM 结构」的隐藏规则，
+  // 例如 `body > *:not(.workspace){ display:none !important }` —— 打印文档的 body 直接子元素
+  // 是 .print-root 而非 .workspace，这条会把整块正文判为 display:none，导致打印全空白。
+  function stripAtMediaBlocks(css) {
+    let out = '', i = 0;
+    while (i < css.length) {
+      const at = css.indexOf('@media', i);
+      if (at === -1) { out += css.slice(i); break; }
+      const brace = css.indexOf('{', at);
+      if (brace === -1) { out += css.slice(i); break; }
+      out += css.slice(i, at);
+      let depth = 0, j = brace;
+      for (; j < css.length; j++) {
+        if (css[j] === '{') depth++;
+        else if (css[j] === '}') { depth--; if (depth === 0) { j++; break; } }
+      }
+      i = j; // 跳过整个 @media 块
+    }
+    return out;
+  }
+
   function buildPrintDocHtml(title) {
     const o = readPdfOpts();
-    // 复制主文档的样式：内联 <style>（应用自身排版）+ 外链样式表（KaTeX / 代码高亮）
-    const inlineCss = Array.from(document.querySelectorAll('style'))
-      .map(s => s.textContent).join('\n');
+    // 复制主文档的样式：内联 <style>（应用自身排版）+ 外链样式表（KaTeX / 代码高亮）。
+    // 内联样式里的 @media 块必须剥掉 —— 它们是按应用自身 DOM 结构写的，会误伤打印文档（见上）。
+    const inlineCss = stripAtMediaBlocks(
+      Array.from(document.querySelectorAll('style')).map(s => s.textContent).join('\n')
+    );
     const links = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
       .map(l => '<link rel="stylesheet" href="' + l.getAttribute('href') + '">').join('\n');
     const printCss = [
