@@ -2138,6 +2138,7 @@
   }
   function loadDoc(d) {
     saveActiveDoc();
+    captureAndSaveReadPos();   // 离开这篇之前，先记下读到哪
     activeDocId = d.id;
     if (mode === 'source') setMode('wysiwyg');
     editor.innerHTML = d.html;
@@ -2148,6 +2149,7 @@
     saveDocsState();
     refreshBeautifyBar();
     refreshClearBar();   // 切了文档，清空撤销入口应失效
+    restoreReadPos(d.id);   // 回到这篇上次读到的位置
   }
   function openNewDoc(html, file) {
     saveActiveDoc();
@@ -3130,7 +3132,10 @@
   }
   editor.addEventListener('input', scheduleDraftSave);
   source.addEventListener('input', scheduleDraftSave);
-  window.addEventListener('beforeunload', takeSnapshot);
+  window.addEventListener('beforeunload', () => {
+    takeSnapshot();
+    try { captureAndSaveReadPos(); } catch (e) {}
+  });
   // 退出前尽力落盘。IDB 是异步的，页面拆除时事务**不保证**提交，所以这只是尽力而为，
   // 不能当成保证 —— 真正的兜底仍是上面那条 800ms 自动保存。
   // 挂 pagehide 与 visibilitychange 两个口子，是因为不同浏览器的时机不一样。
@@ -3138,6 +3143,7 @@
     try { saveDraft(); } catch (e) {}
     try { takeSnapshot(); } catch (e) {}
     try { saveDocsState(); } catch (e) {}
+    try { captureAndSaveReadPos(); } catch (e) {}
   }
   window.addEventListener('pagehide', flushBeforeHide);
   document.addEventListener('visibilitychange', () => {
@@ -3344,7 +3350,7 @@
     'folio.snapshots': '版本快照', 'folio.library': '知识库', 'folio.words': '单词库',
     'folio.focus': '专注记录', 'folio.focus.state': '专注计时中', 'folio.cats': '知识库分类',
     'folio.beautify': '美化设置', 'folio.pdfOpts': 'PDF 导出设置', 'folio.splitPrefs': '分屏记忆',
-    'folio.selOff': '划词关闭记录', 'folio.zoom': '纸面缩放', 'folio.translate': '翻译设置（含 API 密钥）'
+    'folio.selOff': '划词关闭记录', 'folio.zoom': '纸面缩放', 'folio.readPos': '阅读位置', 'folio.translate': '翻译设置（含 API 密钥）'
   };
   // 字节格式化：只用于 navigator.storage.estimate() 的返回（那个确实是字节）
   function fmtBytes(n) {
@@ -4258,6 +4264,129 @@
     const top = h.getBoundingClientRect().top - stage.getBoundingClientRect().top + stage.scrollTop - 24;
     stage.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
   }
+  // ===== 记住每篇文档的阅读位置 =====
+  // 长文档每次打开都要重新翻回原处，很烦。这里按文档 id 记住读到哪。
+  //
+  // 存的是**锚点 + 相对偏移**，不是裸 scrollTop：重新打开时上方内容可能因图片/公式
+  // 渲染而变高，裸像素会漂；「最近的标题 + 它相对视口的偏移」对上方回流免疫。
+  // 一个标题都没有时才退化为按总高度比例，再不行才用裸像素。
+  // 偏移按纸面缩放折算（见 #folio-zoom），所以换了缩放比例位置仍然对得上。
+  const READ_POS_KEY = 'folio.readPos';
+  const READ_POS_MAX = 60;     // 最多记多少篇，按最近使用淘汰
+  let readPosTimer = 0;
+  let restoringReadPos = false;   // 恢复过程中自己触发的滚动不该被当成「用户滚动」再存一次
+
+  function loadReadPos() {
+    let o = null;
+    try { o = JSON.parse(localStorage.getItem(READ_POS_KEY) || 'null'); } catch (e) {}
+    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+  }
+  function saveReadPosMap(map) {
+    const keys = Object.keys(map);
+    if (keys.length > READ_POS_MAX) {
+      keys.sort((a, b) => (map[a].t || 0) - (map[b].t || 0));
+      keys.slice(0, keys.length - READ_POS_MAX).forEach(k => { delete map[k]; });
+    }
+    safeSet(READ_POS_KEY, JSON.stringify(map));
+  }
+  function currentPaperZoom() {
+    const st = document.querySelector('.stage');
+    const z = st ? parseFloat(getComputedStyle(st).getPropertyValue('--folio-zoom')) : 1;
+    return (z && isFinite(z) && z > 0) ? z : 1;
+  }
+  // 源码模式下编辑器是 display:none，标题的 rect 全是 0，拿它算锚点会锚到最后一个标题上
+  function canAnchorReadPos() {
+    return mode === 'wysiwyg' && editor.style.display !== 'none';
+  }
+  // 锚点必须**由内容推出来**，不能用导航那套 WeakMap 锚点：后者是内存里按元素身份
+  // 编号的，刷新页面就全变了，存下来毫无意义（而「刷新后回到原处」正是这个功能的
+  // 主要场景）。这里用「级别 + 同名标题的出现次序 + 文本」，跨刷新稳定，
+  // 上方插入内容也照样对得上。
+  function normHeadText(h) { return (h.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80); }
+  function stableAnchorOf(h, hs) {
+    const lvl = h.tagName.toLowerCase(), txt = normHeadText(h);
+    let idx = 0;
+    for (const x of (hs || headingsNow())) {
+      if (x === h) break;
+      if (x.tagName.toLowerCase() === lvl && normHeadText(x) === txt) idx++;
+    }
+    return lvl + '|' + idx + '|' + txt;
+  }
+  function headingByStableAnchor(key) {
+    const parts = String(key).split('|');
+    if (parts.length < 3) return null;
+    const lvl = parts[0], want = parseInt(parts[1], 10), txt = parts.slice(2).join('|');
+    let seen = 0;
+    for (const h of headingsNow()) {
+      if (h.tagName.toLowerCase() !== lvl || normHeadText(h) !== txt) continue;
+      if (seen === want) return h;
+      seen++;
+    }
+    return null;
+  }
+  function captureReadPos() {
+    if (view !== 'editor' || !activeDocId) return null;
+    const stage = document.querySelector('.stage');
+    if (!stage || contentEmpty()) return null;   // 空文档没有「读到哪」可言
+    const z = currentPaperZoom();
+    const stageTop = stage.getBoundingClientRect().top;
+    let anchor = '', rel = 0;
+    if (canAnchorReadPos()) {
+      const line = stageTop + 8;   // 以视口上方 8px 为阅读线，与导航高亮同一套口径
+      const hs = headingsNow();
+      for (const h of hs) {
+        const top = h.getBoundingClientRect().top;
+        if (top > line) break;
+        anchor = stableAnchorOf(h, hs);
+        rel = (top - stageTop) / z;
+      }
+    }
+    const max = Math.max(1, stage.scrollHeight - stage.clientHeight);
+    return {
+      a: anchor,
+      d: anchor ? Math.round(rel * 100) / 100 : 0,
+      r: Math.round(stage.scrollTop / max * 10000) / 10000,
+      s: Math.round(stage.scrollTop),
+      t: Date.now()
+    };
+  }
+  function captureAndSaveReadPos() {
+    const p = captureReadPos();
+    if (!p || !activeDocId) return;
+    const map = loadReadPos();
+    map[activeDocId] = p;
+    saveReadPosMap(map);
+  }
+  function restoreReadPos(docId, smooth) {
+    const stage = document.querySelector('.stage');
+    if (!stage || !docId) return false;
+    const map = loadReadPos();
+    const p = map[docId];
+    if (!p) return false;
+    const max = Math.max(0, stage.scrollHeight - stage.clientHeight);
+    const z = currentPaperZoom();
+    let top = null;
+    if (p.a && canAnchorReadPos()) {
+      const h = headingByStableAnchor(p.a);
+      if (h) top = h.getBoundingClientRect().top - stage.getBoundingClientRect().top + stage.scrollTop - (p.d || 0) * z;
+    }
+    if (top === null && typeof p.r === 'number') top = p.r * max;
+    if (top === null && typeof p.s === 'number') top = p.s;
+    if (top === null) return false;
+    top = Math.max(0, Math.min(top, max));
+    restoringReadPos = true;
+    stage.scrollTo({ top: top, behavior: smooth ? 'smooth' : 'auto' });
+    setTimeout(() => { restoringReadPos = false; }, 120);   // 平滑滚动期间别被当成用户滚动
+    p.t = Date.now();
+    saveReadPosMap(map);   // 顺带刷新「最近使用」的时间，淘汰才按最近的来
+    return true;
+  }
+  function scheduleReadPosSave() {
+    if (restoringReadPos) return;
+    clearTimeout(readPosTimer);
+    readPosTimer = setTimeout(captureAndSaveReadPos, 500);
+  }
+
   function flashHeading(h) {
     const prev = h.style.outline;
     h.style.outline = '2px solid var(--accent)';
@@ -4320,6 +4449,7 @@
   }
   let navScrollRaf = 0;
   document.querySelector('.stage').addEventListener('scroll', () => {
+    scheduleReadPosSave();       // 自带防抖，与下面那条 rAF 互不干扰
     if (navScrollRaf) return;
     navScrollRaf = requestAnimationFrame(() => { navScrollRaf = 0; highlightNavByScroll(); });
   }, { passive: true });
@@ -6438,6 +6568,9 @@ $$\\text{MOS (%)} = \\frac{10,000 - 6,250}{10,000} = 37.5%$$
       }
       // 水合期间产生的内容立刻写入当前后端，别让它只活在编辑器里
       if (editorTouched) { try { saveDocsState(); } catch (e) {} }
+      // 回到上次读到的地方。用户在水合期间已经动过编辑器时就不打扰他 —— 他显然
+      // 正忙着，把他拽回旧位置只会更烦。
+      if (!editorTouched) { try { restoreReadPos(activeDocId); } catch (e) {} }
       try { renderAllAnnots(); } catch (e) {}
     } catch (e) {
       console.warn('[Folio] 启动恢复失败', e);

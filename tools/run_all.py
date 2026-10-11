@@ -43,8 +43,14 @@ for label, exe in BROWSERS:
         ok = (r.returncode == 0)
         if not ok:
             failed.append("%s / %s" % (label, tool))
-        body = [l for l in (r.stdout or "").split("\n") if "结论" in l]
-        print("  %-22s %s" % (tool, body[-1].strip() if body else "无输出"))
+        lines = [l.strip() for l in (r.stdout or "").split("\n") if l.strip()]
+        concl = [l for l in lines if "结论" in l]
+        if concl:
+            print("  %-22s %s" % (tool, concl[-1]))
+        else:
+            # 拿不到结论时，把「能直接照做的提示」显示出来，而不是干巴巴一句「无输出」
+            hint = [l for l in lines if l.startswith("提示")]
+            print("  %-22s %s" % (tool, hint[-1] if hint else "无输出"))
     print("")
 
 print("=" * 70)

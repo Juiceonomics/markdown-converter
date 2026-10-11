@@ -126,6 +126,47 @@ def kill(proc):
         pass
 
 
+def run_browser(url, extra_args, timeout=180):
+    """跑一次浏览器（用完即杀进程树），返回 (returncode, stdout, stderr)。
+
+    必须带一次性 --user-data-dir，否则 headless 会去抢**默认 profile**：
+    只要用户自己开着 Edge/Chrome，headless 就起不来 —— 表现是**静默失败**
+    （不产出 PDF、dump-dom 返回 0 字节、stderr 什么都没有），极难查。
+    而且反复启动会积下大量孤儿进程，最后把浏览器拖垮。
+    （这次就是靠数出 124 个残留 msedge 进程才定位到的。）
+    """
+    profile = tempfile.mkdtemp(prefix="folio-browser-")
+    args = [BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
+            "--no-first-run", "--no-default-browser-check",
+            "--user-data-dir=" + profile] + list(extra_args) + [url]
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, out, err
+    except subprocess.TimeoutExpired:
+        kill(proc)
+        return None, b"", b"(timeout)"
+    finally:
+        kill(proc)
+        shutil.rmtree(profile, ignore_errors=True)
+
+
+def missing_output_hint():
+    """没拿到输出时给一句能直接照做的排查提示。
+
+    Edge 有个坑：它常驻后台（任务管理器里能看到 `--no-startup-window` 的 msedge 进程），
+    这时再启动 headless 会被它**接管** —— 新进程立刻以 rc=0 退出、stdout 空、
+    `--print-to-pdf` 也不产出文件，而且没有任何报错。加了 --user-data-dir 也一样。
+    表现和「代码坏了」一模一样，极容易误判（这次就误判过一轮）。
+    靠 HTTP 回传结果的用例不受影响，因为真正干活的那个进程还活着。
+    """
+    name = os.path.basename(BROWSER).lower()
+    if "msedge" not in name:
+        return ""
+    return ("提示：如果 Edge 正开着（后台驻留会接管新的 headless 进程，表现为 rc=0、"
+            "无输出、不产出文件且无报错），请先完全退出 Edge 再重跑本检查。")
+
+
 def run_case(repo, inject_js, pre_js=None, timeout=120):
     """把一个用例注入 index.html，跑一遍，返回 (结果文本, 失败时的诊断)。
     用例文件里可写 `//@PRE` 分隔：在此之前的内容注入到**应用脚本之前**

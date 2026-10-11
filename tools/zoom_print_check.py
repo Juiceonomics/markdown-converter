@@ -13,7 +13,10 @@
 #
 # 用法: python tools/zoom_print_check.py
 #   换浏览器: FOLIO_BROWSER="...msedge.exe" python tools/zoom_print_check.py
-import os, subprocess, sys
+import os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BROWSER = os.environ.get("FOLIO_BROWSER") or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -60,10 +63,9 @@ def print_pdf(zoom, tag, strip_reset):
     pp = os.path.join(REPO, "_t_zoomprint_%s.pdf" % tag)
     open(hp, "w", encoding="utf-8").write(patched)
     try:
-        subprocess.run([BROWSER, "--headless=new", "--disable-gpu", "--no-sandbox",
-                        "--no-pdf-header-footer", "--virtual-time-budget=9000",
-                        "--print-to-pdf=" + pp, "file:///" + hp.replace("\\", "/")],
-                       capture_output=True, timeout=180)
+        harness.run_browser("file:///" + hp.replace("\\", "/"),
+                            ["--no-pdf-header-footer", "--virtual-time-budget=9000",
+                             "--print-to-pdf=" + pp])
         if not os.path.exists(pp):
             return None, None
         import pymupdf
@@ -88,6 +90,9 @@ red, _ = print_pdf("2", "red", True)
 
 if base is None or zoom2 is None or red is None:
     print("PDF 未生成，无法判定")
+    h = harness.missing_output_hint()
+    if h:
+        print(h)
     sys.exit(1)
 
 print("100%%          : 页数=%d  页面=%.0fx%.0fpt  正文字符=%d" % base)
