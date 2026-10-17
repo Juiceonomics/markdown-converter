@@ -22,11 +22,16 @@ window.addEventListener('load', function () {
     var savedHtml = editor.innerHTML;
     var longMath = '$$' + Array.from({ length: 40 }, function (_, i) { return 'a_{' + i + '}^2'; }).join(' + ') + ' = 0$$';
     editor.innerHTML = mdToHtml(longMath);
+    // 必须走应用自己的内容装载钩子：滚动容器现在是**按需**加的（见 case_math.js），
+    // 直接设 innerHTML 而不触发标记，长公式就真的会顶出纸面
+    renderAllAnnots();
     editor.offsetHeight; // 强制重排后再量
     var over = Math.round(st.scrollWidth - st.clientWidth);
     t('长算式不撑破纸面', over <= 2, true);
     out.push('INFO 长算式下横向溢出=' + over + 'px（未修复时应约 1036px）');
+    t('长算式确实被装进了滚动容器', editor.querySelector('.math-block').classList.contains('math-wide'), true);
     editor.innerHTML = savedHtml;
+    renderAllAnnots();
 
     // ---- ② 导入即留档 ----
     var before = histNow().length;

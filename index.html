@@ -214,12 +214,23 @@
     outline: none;
     font-family: var(--font-serif); font-size: 16px; line-height: 1.85; color: var(--ink);
   }
-  /* 长算式不再撑破纸面：KaTeX 的显示公式（.math-block）无法折行，
-     一条长公式会直接顶出白纸。实测：40 项的多项式公式内容宽 2258px、编辑器仅 719px，
-     横向溢出 1036px。给它一个横向滚动的容器，公式留在纸面内、可左右滚动查看。
-     实测确认：长文本 / 宽表格 / 宽图片 / 长代码行本来就不会溢出，
-     故不额外加 overflow-wrap / word-break / img max-width 等冗余规则。 */
-  .editor .math-block { max-width: 100%; overflow-x: auto; }
+  /* 长算式不再撑破纸面：KaTeX 的显示公式（.math-block）无法折行，一条长公式会顶出白纸。
+     （实测：40 项的多项式公式内容宽 2258px、编辑器仅 719px，横向溢出 1036px。
+     长文本 / 宽表格 / 宽图片 / 长代码行本来就不会溢出，故不加那些冗余规则。）
+
+     但滚动容器**只在真的放不下时才加**，由 refreshMathOverflow 量出来打上 .math-wide。
+     绝不能常开 overflow-x:auto —— CSS 规定一轴为 auto 时，另一轴的 visible 会被算成 auto，
+     于是哪怕只有 1px 的竖向舍入误差也会画出一根竖滚动条（实测 E=mc² 这种短公式就中招），
+     而且那根滚动条会占掉 15px 宽，把纸面挤窄、每根短公式旁边都挂一条杠。
+     overflow-y:hidden 是故意的：横向滚动条要吃 15px 高，不锁住竖向就会再冒一根竖滚动条；
+     底下的 padding 正好把那 15px 补回来，滚动条落在 padding 里，压不到公式下缘。 */
+  .editor .math-block { max-width: 100%; }
+  .editor .math-block.math-wide {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 14px;
+    margin-bottom: calc(1.1em - 14px);
+  }
   .editor:focus { box-shadow: 0 1px 2px rgba(27,26,23,.04), 0 18px 48px rgba(27,26,23,.10), 0 0 0 2px var(--accent-soft); }
   .editor:empty::before { content: '在这里粘贴 Markdown，或直接开始编辑…'; color: var(--muted); }
   .source {
@@ -410,7 +421,8 @@
   .pdf-page img { max-width: 100%; border-radius: 6px; }
   .pdf-page ul, .pdf-page ol { padding-left: 1.7em; }
   .pdf-page li { margin: .3em 0; }
-  .pdf-page .math-block { text-align: center; margin: 1em 0; overflow-x: auto; }
+  .pdf-page .math-block { text-align: center; margin: 1em 0; }
+  .pdf-page .math-block.math-wide { overflow-x: auto; overflow-y: hidden; padding-bottom: 14px; margin-bottom: calc(1em - 14px); }
   .hist-item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-bottom: 1px solid var(--hairline); }
   .hist-item:last-child { border-bottom: none; }
   .hist-main { flex: 1; min-width: 0; }
@@ -1798,6 +1810,8 @@
   function applyZoom() {
     zoomStage.style.setProperty('--folio-zoom', zoomLevel);
     zoomResetBtn.textContent = Math.round(zoomLevel * 100) + '%';
+    // 纸面宽窄变了，原来放得下的公式可能放不下了（反之亦然）
+    try { refreshMathOverflow(null, true); } catch (e) {}
   }
   function setZoom(z) {
     const next = clampZoom(z);
@@ -1828,6 +1842,17 @@
     e.preventDefault();
     setZoom(zoomLevel + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
   }, { passive: false });
+
+  // 窗口尺寸变化：纸面可用宽度变了，要重新判定哪些公式放不下
+  let mathResizeTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(mathResizeTimer);
+    mathResizeTimer = setTimeout(() => { try { refreshMathOverflow(null, true); } catch (e) {} }, 200);
+  });
+  // KaTeX 的字体是本地异步加载的：字体到位后公式宽度会变，必须重量一次
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => { try { refreshMathOverflow(null, true); } catch (e) {} });
+  }
 
   zoomLevel = loadZoomCfg();
   applyZoom();
@@ -4227,6 +4252,7 @@
     return true;
   }
   function refreshNav(force) {
+    try { refreshMathOverflow(); } catch (e) {}
     const headings = headingsNow();
     document.getElementById('nav-count').textContent = headings.length;
     // 只在标题集合真的变化时才重建 DOM：长文档下每次输入都整表重建会造成卡顿
@@ -5694,9 +5720,30 @@
       '</div>'
     ).join('');
   }
+  // ===== 公式横向溢出：只在真的放不下时才装滚动容器 =====
+  // 理由见 CSS 里 .math-block.math-wide 上面那段注释：常开 overflow-x:auto 会让
+  // 短公式也挂上一根竖滚动条并把纸面挤窄。
+  // 量法上有个坑：对 overflow:visible 的元素 scrollWidth 拿不到真实内容宽，
+  // 所以先戴上 .math-wide 再量、量完不合适就摘掉 —— 全程同步，中间态不会被绘制出来。
+  let mathMarkedCount = -1;
+  function refreshMathOverflow(root, force) {
+    const host = root || editor;
+    const blocks = host.querySelectorAll('.math-block');
+    // 数量没变就不重复量：DOM 观察器在打字时会频繁触发，长文档里逐块强制重排代价不小
+    if (!force && !root && blocks.length === mathMarkedCount) return;
+    if (!root) mathMarkedCount = blocks.length;
+    blocks.forEach(el => {
+      el.classList.add('math-wide');
+      const overflows = el.scrollWidth > el.clientWidth + 1;
+      if (!overflows) el.classList.remove('math-wide');
+    });
+  }
+
   function renderAllAnnots() {
     renderAnnots(annotList, '还没有批注。选中文字后在上方添加。');
     renderAnnots(annotSidebarList, '还没有批注');
+    // 内容刚换过：这时候量最准，也不会有「先闪一下滚动条再消失」
+    try { refreshMathOverflow(null, true); } catch (e) {}
   }
 
   function handleAnnotClick(e) {
@@ -6348,6 +6395,9 @@ ${bodyHtml}
     pdfPreview.style.padding = Math.round(parseFloat(o.margin) * MM2PX) + 'px';
     pdfPreview.style.fontSize = (parseFloat(o.font) * 1.3333).toFixed(1) + 'px';
     pdfPreview.style.lineHeight = o.line;
+    // 必须放在**宽度定下来之后**：纸张/边距一改，可用宽度就变了，
+    // 哪根公式放不下也跟着变。放在前面量的是旧宽度，结论是错的。
+    try { refreshMathOverflow(pdfPreview, true); } catch (e) {}
   }
   Object.keys(pdfOptEls).forEach(k => pdfOptEls[k].addEventListener('change', () => {
     savePdfOpts();
@@ -6406,6 +6456,9 @@ ${bodyHtml}
     syncPdfPanelWithBeautify();
     syncPdfPreview();
     pdfModal.hidden = false;
+    // 必须等显示之后再量一次：display:none 时元素的 rect 全是 0，
+    // 量出来「没有溢出」，于是长公式不会被装上滚动容器
+    try { refreshMathOverflow(pdfPreview, true); } catch (e) {}
     document.getElementById('pdf-close').focus();
   }
   function closePdfModal() { pdfModal.hidden = true; document.getElementById('btn-pdf').focus(); }

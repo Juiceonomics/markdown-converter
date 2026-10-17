@@ -8,3 +8,6 @@ desktop.ini
 *~
 .superpowers/
 tools/__pycache__/
+
+# 测试脚本的临时产物（被打断时可能残留，别提交进来）
+_t_*
