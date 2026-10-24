@@ -58,6 +58,37 @@ window.addEventListener('load', function () {
     window.dispatchEvent(new Event('afterprint'));
     t('源码模式后标题也还原', document.title !== '源码标题', true);
 
+    // ---- 背景色：可选、预览实时反映、并且能真的印出来 ----
+    // 起因：用户导出的 PDF 需要白底，而应用整体是暖色调，原先没有任何可选项。
+    var bgSel = document.getElementById('pdf-opt-bg');
+    t('有背景色选项', !!bgSel, true);
+    t('默认背景是白色', bgSel.value, '#FFFFFF');
+
+    editor.innerHTML = '<h1>背景测试</h1><p>正文</p>';
+    document.getElementById('btn-pdf').click();
+    var pv = document.getElementById('pdf-preview');
+    function bgOf(el) { return getComputedStyle(el).backgroundColor; }
+    t('打开面板时预览纸是白色', bgOf(pv), 'rgb(255, 255, 255)');
+
+    bgSel.value = '#F6F3EC';
+    bgSel.dispatchEvent(new Event('change', { bubbles: true }));
+    t('预览实时变成暖纸色', bgOf(pv), 'rgb(246, 243, 236)');
+    t('选择被持久化', JSON.parse(localStorage.getItem('folio.pdfOpts')).bg, '#F6F3EC');
+
+    window.dispatchEvent(new Event('beforeprint'));
+    var css = (document.getElementById('pdf-print-style') || {}).textContent || '';
+    t('打印样式里带上了所选背景色', css.indexOf('#F6F3EC') !== -1, true);
+    // 没有这条，浏览器默认会把背景色丢掉，用户选了颜色却导出白纸
+    t('打印样式强制输出背景（print-color-adjust: exact）', /print-color-adjust:\s*exact/.test(css), true);
+    // 页边距区域也要染色，否则纸张四周留一圈白边、看起来像没生效
+    t('打印样式把 html/body 页边距一起染色', /html, body/.test(css), true);
+    window.dispatchEvent(new Event('afterprint'));
+
+    bgSel.value = '#FFFFFF';
+    bgSel.dispatchEvent(new Event('change', { bubbles: true }));
+    t('切回白色后预览同步', bgOf(pv), 'rgb(255, 255, 255)');
+    document.getElementById('pdf-cancel').click();
+
     window.print = realPrint;
     var pre = document.createElement('pre');
     pre.id = 'zz-results';

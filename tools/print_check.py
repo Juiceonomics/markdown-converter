@@ -91,9 +91,8 @@ def run():
     pp = os.path.join(REPO, "_t_print.pdf")
     open(hp, "w", encoding="utf-8").write(patched)
     try:
-        harness.run_browser("file:///" + hp.replace("\\", "/"),
-                            ["--no-pdf-header-footer", "--virtual-time-budget=9000",
-                             "--print-to-pdf=" + pp])
+        harness.print_to_pdf("file:///" + hp.replace("\\", "/"), pp,
+                             ["--no-pdf-header-footer", "--virtual-time-budget=9000"])
         if not os.path.exists(pp):
             return None, None, None, None
         import pymupdf

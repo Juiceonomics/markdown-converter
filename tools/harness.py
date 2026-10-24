@@ -108,6 +108,34 @@ def stop(srv):
         pass
 
 
+def cleanup_strays():
+    """清掉本项目测试留下的孤儿浏览器进程。
+
+    为什么需要：headless 启动器常常先以 rc=0 退出，真正干活的子进程继续活着，
+    而 kill(proc) 只会去杀那个**已经退出的 PID**，什么也杀不到。跑几十个用例后
+    会积到上百个残留进程，把机器拖慢，headless 打印开始随机不产出文件 ——
+    表现和代码回归一模一样（这次就被误导过）。
+
+    只匹配我们自己的标记（profile 前缀 folio-browser-/folio-test-/folio-print-），
+    绝不碰用户正在用的浏览器。
+    """
+    try:
+        if sys.platform == "win32":
+            ps = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | "
+                  "Where-Object { $_.CommandLine -like '*--headless*' -and "
+                  "($_.CommandLine -like '*folio-browser-*' -or $_.CommandLine -like '*folio-test-*' -or "
+                  "$_.CommandLine -like '*folio-print-*') } | "
+                  "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, timeout=60)
+        else:
+            subprocess.run(["pkill", "-f", "folio-browser-"], capture_output=True, timeout=30)
+            subprocess.run(["pkill", "-f", "folio-test-"], capture_output=True, timeout=30)
+            subprocess.run(["pkill", "-f", "folio-print-"], capture_output=True, timeout=30)
+    except Exception:
+        pass
+
+
 def kill(proc):
     try:
         proc.kill()
@@ -148,7 +176,27 @@ def run_browser(url, extra_args, timeout=180):
         return None, b"", b"(timeout)"
     finally:
         kill(proc)
+        cleanup_strays()
         shutil.rmtree(profile, ignore_errors=True)
+
+
+def print_to_pdf(url, pdf_path, extra_args=None, attempts=3, timeout=180):
+    """把页面打印成 PDF，失败自动重试。
+
+    实测：headless 打印偶发**静默失败** —— rc=0、无 stderr、但不产出文件。
+    同样的代码可能上一次成功、这一次失败。不重试的话，套件会随机报红，
+    很容易被误判成代码回归（这次就误判过一轮）。
+    """
+    extra = list(extra_args or [])
+    for _ in range(max(1, attempts)):
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
+        run_browser(url, extra + ["--print-to-pdf=" + pdf_path], timeout=timeout)
+        if os.path.exists(pdf_path):
+            return True
+    return False
 
 
 def missing_output_hint():
@@ -218,6 +266,7 @@ def run_case(repo, inject_js, pre_js=None, timeout=120):
     finally:
         if proc:
             kill(proc)
+        cleanup_strays()
         try:
             os.remove(page)
         except OSError:
