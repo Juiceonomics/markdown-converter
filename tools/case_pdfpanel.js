@@ -59,7 +59,7 @@ window.addEventListener('load', function () {
     t('源码模式后标题也还原', document.title !== '源码标题', true);
 
     // ---- 背景色：可选、预览实时反映、并且能真的印出来 ----
-    // 起因：用户导出的 PDF 需要白底，而应用整体是暖色调，原先没有任何可选项。
+    // 起因：用户导出的 PDF 需要白底/指定底色，而应用整体是暖色调，原先没有任何可选项。
     var bgSel = document.getElementById('pdf-opt-bg');
     t('有背景色选项', !!bgSel, true);
     t('默认背景是白色', bgSel.value, '#FFFFFF');
@@ -82,8 +82,34 @@ window.addEventListener('load', function () {
     t('打印样式强制输出背景（print-color-adjust: exact）', /print-color-adjust:\s*exact/.test(css), true);
     // 页边距区域也要染色，否则纸张四周留一圈白边、看起来像没生效
     t('打印样式把 html/body 页边距一起染色', /html, body/.test(css), true);
-    window.dispatchEvent(new Event('afterprint'));
 
+    // 光有样式表不够：别处一条 !important 就可能把它压掉。内联 !important 优先级最高。
+    t('body 上打了内联背景色', document.body.style.backgroundColor, 'rgb(246, 243, 236)');
+    t('该内联声明带 !important（否则压不过打印规则）',
+      document.body.style.getPropertyPriority('background-color'), 'important');
+    t('正文编辑器也一起染了',
+      document.querySelector('.editor').style.backgroundColor, 'rgb(246, 243, 236)');
+
+    window.dispatchEvent(new Event('afterprint'));
+    t('afterprint 后 body 的内联背景已撤掉', document.body.style.backgroundColor, '');
+    t('afterprint 后编辑器的内联背景也撤掉了',
+      document.querySelector('.editor').style.backgroundColor, '');
+
+    // ---- 用户的真实路径：点「下载 PDF」→ window.print() ----
+    // 浏览器会在 print() 里触发 beforeprint；这里用打桩模拟它，验证这条路径也带上颜色。
+    var seenBg = null;
+    var realPrint2 = window.print;
+    window.print = function () {
+      window.dispatchEvent(new Event('beforeprint'));
+      seenBg = document.body.style.backgroundColor;
+      window.dispatchEvent(new Event('afterprint'));
+    };
+    document.getElementById('pdf-download').click();
+    window.print = realPrint2;
+    t('点「下载 PDF」这条路也把背景色带进去了', seenBg, 'rgb(246, 243, 236)');
+    t('真实路径结束后内联背景也撤掉了', document.body.style.backgroundColor, '');
+
+    document.getElementById('btn-pdf').click();
     bgSel.value = '#FFFFFF';
     bgSel.dispatchEvent(new Event('change', { bubbles: true }));
     t('切回白色后预览同步', bgOf(pv), 'rgb(255, 255, 255)');

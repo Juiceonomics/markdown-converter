@@ -6425,8 +6425,36 @@ ${bodyHtml}
 
   // 打印前把纸张/边距/字号写成「只在 print 媒体生效」的样式。
   // 插到 head 末尾 → 规则晚于主样式表，冲突属性以后者为准（覆盖默认 14mm 边距）。
+  // 打印背景色：除了注入样式表，还以**内联 !important** 直接打到页面元素上。
+  // 原因：样式表规则可能被别处的 !important 或奇怪的级联压掉；内联 !important
+  // 的优先级最高，能保证「用户选了颜色就一定生效」。afterprint 时原样撤掉。
+  let pdfBgTouched = [];
+  function applyPdfPrintBackground(color) {
+    pdfBgTouched = [];
+    const els = [document.documentElement, document.body,
+                 document.querySelector('.workspace'), document.querySelector('.stage'),
+                 ...document.querySelectorAll('.editor')];
+    els.forEach(el => {
+      if (!el) return;
+      pdfBgTouched.push([el, el.style.getPropertyValue('background-color')]);
+      el.style.setProperty('background-color', color, 'important');
+      el.style.setProperty('print-color-adjust', 'exact');
+      el.style.setProperty('-webkit-print-color-adjust', 'exact');
+    });
+  }
+  function restorePdfPrintBackground() {
+    pdfBgTouched.forEach(([el, prev]) => {
+      if (prev) el.style.setProperty('background-color', prev);
+      else el.style.removeProperty('background-color');
+      el.style.removeProperty('print-color-adjust');
+      el.style.removeProperty('-webkit-print-color-adjust');
+    });
+    pdfBgTouched = [];
+  }
+
   function applyPdfPrintStyle() {
     const o = readPdfOpts();
+    applyPdfPrintBackground(o.bg);
     let el = document.getElementById('pdf-print-style');
     if (!el) {
       el = document.createElement('style');
@@ -6509,6 +6537,7 @@ ${bodyHtml}
     document.title = deriveBaseName(); // 让打印对话框默认文件名用文档标题
   });
   window.addEventListener('afterprint', () => {
+    restorePdfPrintBackground();
     if (pdfPrintPrevTitle !== null) { document.title = pdfPrintPrevTitle; pdfPrintPrevTitle = null; }
     // 本次导出参数（纸张/边距/字号）不留给下一次 —— 否则用户以为「回到默认」时
     // 仍会静默沿用上次在弹窗里选的 A3/28mm，尤其在 Ctrl+P 这条入口上
